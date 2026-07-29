@@ -1,0 +1,300 @@
+/******************************************************************************
+**
+**  Copyright 2016 Dale Eason
+**  This file is part of DFTFringe
+**  is free software: you can redistribute it and/or modify
+** it under the terms of the GNU General Public License as published by
+** the Free Software Foundation version 3 of the License
+
+** DFTFringe is distributed in the hope that it will be useful,
+** but WITHOUT ANY WARRANTY; without even the implied warranty of
+** MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+** GNU General Public License for more details.
+**
+** You should have received a copy of the GNU General Public License
+** along with DFTFringe.  If not, see <http://www.gnu.org/licenses/>.
+
+****************************************************************************/
+#ifndef IGRAMAREA_H
+#define IGRAMAREA_H
+
+
+/****************************************************************************
+**
+** Copyright (C) 2013 Digia Plc and/or its subsidiary(-ies).
+** Contact: http://www.qt-project.org/legal
+**
+** This file is part of the examples of the Qt Toolkit.
+**
+** $QT_BEGIN_LICENSE:BSD$
+** You may use this file under the terms of the BSD license as follows:
+**
+** "Redistribution and use in source and binary forms, with or without
+** modification, are permitted provided that the following conditions are
+** met:
+**   * Redistributions of source code must retain the above copyright
+**     notice, this list of conditions and the following disclaimer.
+**   * Redistributions in binary form must reproduce the above copyright
+**     notice, this list of conditions and the following disclaimer in
+**     the documentation and/or other materials provided with the
+**     distribution.
+**   * Neither the name of Digia Plc and its Subsidiary(-ies) nor the names
+**     of its contributors may be used to endorse or promote products derived
+**     from this software without specific prior written permission.
+**
+**
+** THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+** "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+** LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+** A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+** OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+** SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+** LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+** DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+** THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+** (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+** OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE."
+**
+** $QT_END_LICENSE$
+**
+****************************************************************************/
+#include <QColor>
+#include <QImage>
+#include <QPoint>
+#include <QWidget>
+#include <QtCore>
+#include <QtGui>
+#include <QLabel>
+#include <QScrollArea>
+#include "Circleoutline.h"
+#include <list>
+
+#include <opencv2/core/core.hpp>
+#include <opencv2/highgui/highgui.hpp>
+#include "dftthumb.h"
+#include <QTimer>
+#include <QScrollArea>
+#include "settingsigram.h"
+#include <QDockWidget>
+
+extern QScrollArea *gscrollArea;
+enum {OutSideOutline, CenterOutline, PolyArea, EdgeMaskOutline};
+enum zoomMode {NORMALZOOM, EDGEZOOM};
+class regionEditTools;
+class outlinePair{
+public:
+    QImage m_image;
+    CircleOutline m_outline;
+    outlinePair(const QImage &img, const CircleOutline &outline): m_image(img), m_outline(outline){}
+};
+
+class undoStack {
+    std::list<outlinePair> m_stack;
+    std::list<outlinePair> m_redo;
+
+public:
+    undoStack(){};
+    void push(const QImage &img, const CircleOutline &outline);
+    outlinePair  current(){return m_stack.back();};
+    outlinePair undo();
+    outlinePair redo();
+    void clear();
+
+};
+
+
+
+class IgramArea : public QWidget
+{
+    Q_OBJECT
+
+public:
+    IgramArea(QWidget *parent = 0, void *mwp = 0 );
+
+    void *m_mw;
+    bool openImage(const QString &fileName, bool showBoundary = true);
+    bool saveImage(const QString &fileName, const char *fileFormat);
+    void setPenColor(const QColor &newColor);
+    void setPenWidth(int newWidth);
+    bool isModified() const { return modified; }
+    QColor penColor() const { return edgePenColor; }
+    int penWidth() const { return edgePenWidth; }
+    QString lastPath;
+    bool m_doGamma;
+    double m_gammaValue;
+    void crop();
+    void saveOutlines();
+    void deleteOutline();
+    void readOutlines();
+    void autoTraceOutline();
+
+    void SideOutLineActive(bool checked);
+    void CenterOutlineActive(bool checked);
+    void PolyAreaActive(bool checked);
+    void edgeMaskOutLineActive(bool checked);
+    void save();    void nextStep();
+    bool sideOutlineIsActive;
+
+
+    void doGamma(double gammaV);
+    QString m_filename;
+    CircleOutline m_outside;
+    CircleOutline m_center;
+    void hideOutline(bool checked);
+    bool m_hideOutlines;
+    void loadOutlineFileOldV6(const QString &filename);
+    void loadOutlineFile(const QString &filename);
+    void undo();
+    void redo();
+    void writeOutlinesOldV6(QString fileName);
+    void writeOutlines(QString fileName);
+    QString makeOutlineName();
+    void shiftoutline(QPointF p);
+
+    void showAliasDialog();
+    cv::Mat igramToGray(const cv::Mat &roi);
+    cv::Mat qImageToMat(QImage &roi);
+private slots:
+    void aperatureChanged();
+public slots:
+    void setZoomMode(zoomMode mode);
+    void gammaChanged(bool, double);
+    void generateSimIgram();
+    void clearImage();
+    void dftReady(const QImage &img);
+    void outlineTimerTimeout();
+    void shiftUp();
+    void shiftDown();
+    void shiftRight();
+    void shiftLeft();
+    void zoomIn();
+    void zoomOut();
+    void igramOutlineParmsChanged(const outlineParms &parms);
+    void increaseValue(int);
+    void increase();
+    void decrease();
+    void zoomFull();
+    void toggleHideOutline();
+    void edgeMode();
+signals:
+    void enableShiftButtons(bool);
+    void statusBarUpdate(QString, int);
+    void selectDFTab();
+    void upateColorChannels(cv::Mat);
+    void showTab(int);
+    void dftCenterFilter(double);
+    void imageSize(QString);
+    void doDFT();
+protected:
+    bool eventFilter(QObject *object, QEvent *event);
+    void wheelEvent(QWheelEvent * event);
+    void mousePressEvent(QMouseEvent *event);
+    void mouseMoveEvent(QMouseEvent *event);
+    void mouseReleaseEvent(QMouseEvent *event);
+    void paintEvent(QPaintEvent *event);
+    void resizeEvent(QResizeEvent *event);
+    void computeZoomBounds();
+    QPointF calculateZoomedPt(QPointF p);
+    void DrawZoomed(void);
+    void DrawSimIgram(void);
+private:
+    QPushButton *m_demo;
+    QWidget *outlinePlotWindow;
+    QDockWidget *dock;
+    void drawBoundary();
+    void resizeImage();
+    void zoom(int del, QPointF zoompt);
+    bool modified;
+    bool scribbling;
+    bool regionMode;
+    bool verticalTracking;
+    int edgePenWidth;
+    int centerPenWidth;
+    double opacity;
+    double m_lastGamma;
+    bool needToConvertBGR;
+    QColor centerPenColor;
+    QColor edgePenColor;
+    bool m_autoSaveOutline;
+
+    double leftMargin;
+    double searchOutlineScale;
+    cv::Point2d findBestOutsideOutline(const cv::Mat &gray, int start, int end, int step, int *radius, int pass);
+    cv::Point2d findBestCenterOutline(const cv::Mat &gray, int start, int end, int step, int *radius, bool useExisting);
+    QString m_outlineMsg;
+    double m_edgeMaskWidth;
+    void saveRegions();
+public:
+    void deleteRegions();
+    QImage igramColor;
+    QImage igramDisplay;    // gray with outlines
+    QImage igramGray;       // the unlined gray igram.
+    QVector<std::vector<cv::Point> > m_polygons;
+    int polyndx;
+    regionEditTools *m_regionEdit;
+    bool m_userGuided;
+    void syncRegions();
+    void findOutline();
+    void findCenterHole();
+    void useLastOutline();
+    void useAnnulusforCenterOutine();
+private:
+    QImage m_withOutlines;
+    QPointF m_OutterP1;
+    QPointF m_OutterP2;
+    QPointF m_innerP1;
+    QPointF m_innerP2;
+    QPointF lastPoint;
+    QPointF zoompt;
+    QString m_searchMsg;
+
+
+    undoStack m_outsideHist;
+    undoStack m_centerHist;
+    QAction *fitToWindowAct;
+    double scale;
+    double fitScale;
+    int outterPcount;
+    int innerPcount;
+
+    int lineStyle;
+
+
+    int zoomIndex;
+    bool dragMode;
+    bool cntrlPressed;
+    QPointF dragStart;
+    int crop_dx;
+    int crop_dy;
+    int cropTotalDx, cropTotalDy;
+    double cropScale;
+    dftThumb *m_dftThumb;
+    QTimer *m_outlineTimer;
+    bool hasBeenCropped;
+    int m_zoomBoxWidth;
+    int m_usingChannel;
+    zoomMode m_zoomMode;
+    void increaseRegion(int n, double scale);
+
+    bool m_searching_outside;
+    bool m_searching_center;
+    int autoOutsideRadiusOffset;
+    int autoOutsideXOffset;
+    int autoOutsideYOffset;
+    void adjustCenterandRegions();
+    void computeEdgeRadius();
+
+public:
+   QImage getBestChannel(QImage &img);
+   int m_current_boundry;
+public slots:
+   void addregion();
+   void deleteregion(int);
+   void selectRegion(int);
+   void colorChannelChanged();
+   // m_mw(mw),QWidget(parent),scale(1.),outterPcount(0), innerPcount(0), zoomFactor(0.),m_current_boundry(OutSideOutline),
+      //zoomIndex(0),dragMode(false),m_hideOutlines(false),cropTotalDx(0), cropTotalDy(0), hasBeenCropped(false)
+};
+//! [0]
+
+#endif

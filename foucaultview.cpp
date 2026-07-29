@@ -1,0 +1,989 @@
+#include "foucaultview.h"
+#include "ui_foucaultview.h"
+#include "spdlog/spdlog.h"
+#include "mirrordlg.h"
+#include <opencv2/opencv.hpp>
+#include <opencv2/highgui/highgui.hpp>
+#include "simulationsview.h"
+#include <QVector>
+#include <QMenu>
+#include "zernikeprocess.h"
+#include "ronchicomparedialog.h"
+extern double outputLambda;
+
+foucaultView::foucaultView(QWidget *parent, SurfaceManager *sm) :
+    QWidget(parent),
+    ui(new Ui::foucaultView), m_sm(sm), heightMultiply(1)
+{
+    m_wf = 0;
+    lateralOffset = 0;
+    needsDrawing = false;
+    ui->setupUi(this);
+    QSettings set;
+    ui->lpiSb->setValue(set.value("ronchiLPI", 100).toDouble());
+    connect(&m_guiTimer, &QTimer::timeout, this, &foucaultView::on_makePb_clicked);
+    ui->rocOffsetSb->setSuffix(" inch");
+    ui->useMM->setChecked(set.value("simUseMM",false).toBool());
+    ui->RonchiX->blockSignals(true);
+    ui->RonchiX->setValue(set.value("RonchiROCFactor", 3).toDouble());
+    ui->RonchiX->blockSignals(false);
+    if (ui->useMM->isChecked()){
+        on_useMM_clicked(true);
+    }
+    connect(this, &QWidget::customContextMenuRequested, this,
+            &foucaultView::showContextMenu);
+    setContextMenuPolicy(Qt::CustomContextMenu);
+
+    // Load Grid Settings with the "ronchiGrid" key
+    m_gridMode       = static_cast<GridMode>(set.value("ronchiGrid/mode", (int)GridMode::None).toInt());
+    m_gridSpacing    = set.value("ronchiGrid/spacing", 10.0).toDouble();
+    m_gridLineWidth  = set.value("ronchiGrid/lineWidth", 1).toInt();
+    m_showUnitLabels = set.value("ronchiGrid/showLabels", true).toBool();
+
+    // Using name() and string check for robust color persistence
+    m_gridColor      = QColor(set.value("ronchiGrid/color", "#00FFFF").toString()); // Default Cyan
+    m_textColor      = QColor(set.value("ronchiGrid/textColor", "#FFFFFF").toString()); // Default White
+
+}
+
+
+
+
+foucaultView *foucaultView::get_Instance(SurfaceManager *sm){
+    //static foucaultView m_instance{0, sm};
+    //return &m_instance;
+    // Take care. This is non standard init for when the singleton is supposed to be deleted by parent
+    // keeping original version will call class destructor and on_exit will try to clean up static variable m_instance. But the instance doesn't exist anymore.
+    static foucaultView *m_instance = new foucaultView(0, sm);
+    return m_instance;
+}
+
+foucaultView::~foucaultView()
+{
+    delete ui;
+    spdlog::get("logger")->trace("foucaultView::~foucaultView");
+}
+QString getSaveFileName(const QString &type){
+    QSettings settings;
+    QString path = settings.value("lastPath","").toString();
+
+    QString fileName = QFileDialog::getSaveFileName(0,
+            QString("File name of %1 image to be saved").arg(type),
+                                                 path);
+
+    if (!fileName.endsWith(".jpg"))
+        fileName = fileName + ".jpg";
+    return fileName;
+
+}
+void foucaultView::showContextMenu(QPoint pos)
+{
+
+// Handle global position
+    QPoint globalPos = mapToGlobal(pos);
+    // Create menu and insert some actions
+    QMenu myMenu;
+    myMenu.addAction("Save Ronchi image",  this, &foucaultView::saveRonchiImage);
+    myMenu.addAction("Save Foucault Image", this,  &foucaultView::saveFoucaultImage);
+    QAction  *showAllRonchi = new QAction("Show all Selected Wave Fronts using Ronchi");
+    connect (showAllRonchi, &QAction::triggered,this, &foucaultView::showSelectedRonchiImages);
+    myMenu.addAction(showAllRonchi);
+
+    QAction *showGrid = new QAction("Show Circular Grid");
+    connect(showGrid, &QAction::triggered, this, &foucaultView::showGrid);
+    myMenu.addSeparator();
+    myMenu.addAction(showGrid);
+
+    // Show context menu at handling position
+    myMenu.exec(globalPos);
+}
+
+void foucaultView::showGrid() {
+    QDialog dlg(this);
+    dlg.setWindowTitle("Ronchi Grid Settings");
+    QFormLayout form(&dlg);
+
+    // Create UI Elements
+    QComboBox *unitCombo = new QComboBox(&dlg);
+    unitCombo->addItems({"None", "Inches", "Millimeters", "Percentage"});
+    unitCombo->setCurrentIndex((int)m_gridMode);
+
+    QDoubleSpinBox *spacingSpin = new QDoubleSpinBox(&dlg);
+    spacingSpin->setRange(0.01, 1000.0);
+    spacingSpin->setValue(m_gridSpacing);
+
+    QSpinBox *widthSpin = new QSpinBox(&dlg);
+    widthSpin->setRange(1, 10);
+    widthSpin->setValue(m_gridLineWidth);
+
+    QCheckBox *textToggle = new QCheckBox("Show unit labels", &dlg);
+    textToggle->setChecked(m_showUnitLabels);
+
+    QPushButton *btnGridCol = new QPushButton("Grid Color");
+    QPushButton *btnTextCol = new QPushButton("Text Color");
+
+    m_temp_colors = { m_gridColor, m_textColor }; // store current values
+
+    connect(btnGridCol, &QPushButton::clicked, this,[this]() {
+        QColor c = QColorDialog::getColor(m_temp_colors.grid, this);
+        if (c.isValid()) m_temp_colors.grid = c;
+    });
+    connect(btnTextCol, &QPushButton::clicked, this, [this]() {
+        QColor c = QColorDialog::getColor(m_temp_colors.text, this);
+        if (c.isValid()) m_temp_colors.text = c;
+    });
+
+    form.addRow("Grid Units:", unitCombo);
+    form.addRow("Spacing Value:", spacingSpin);
+    form.addRow("Line Width (px):", widthSpin);
+    form.addRow("Labels:", textToggle);
+    form.addRow("Grid Color:", btnGridCol);
+    form.addRow("Text Color:", btnTextCol);
+
+    // Button Box with Reset
+    QDialogButtonBox buttonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, Qt::Horizontal, &dlg);
+    QPushButton *resetBtn = buttonBox.addButton("Reset to Defaults", QDialogButtonBox::ResetRole);
+    form.addRow(&buttonBox);
+
+    // Reset Logic
+    connect(resetBtn, &QPushButton::clicked, this, [=]() {
+        unitCombo->setCurrentIndex(0); // None
+        spacingSpin->setValue(10.0);
+        widthSpin->setValue(1);
+        textToggle->setChecked(true);
+        m_temp_colors.grid = Qt::cyan;
+        m_temp_colors.text = Qt::white;
+    });
+
+    connect(&buttonBox, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(&buttonBox, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+
+    if (dlg.exec() == QDialog::Accepted) {
+        m_gridMode = (GridMode)unitCombo->currentIndex();
+        m_gridSpacing = spacingSpin->value();
+        m_gridLineWidth = widthSpin->value();
+        m_showUnitLabels = textToggle->isChecked();
+        m_gridColor = m_temp_colors.grid;
+        m_textColor = m_temp_colors.text;
+
+        // Save to QSettings with "ronchiGrid" prefix
+        QSettings set;
+        set.setValue("ronchiGrid/mode", (int)m_gridMode);
+        set.setValue("ronchiGrid/spacing", m_gridSpacing);
+        set.setValue("ronchiGrid/lineWidth", m_gridLineWidth);
+        set.setValue("ronchiGrid/showLabels", m_showUnitLabels);
+        set.setValue("ronchiGrid/color", m_gridColor.name());
+        set.setValue("ronchiGrid/textColor", m_textColor.name());
+
+        on_makePb_clicked();
+    }
+}
+
+void foucaultView::drawGridOverlay(QImage &img) {
+    if (m_gridMode == GridMode::None || !m_wf || m_gridSpacing <= 0) return;
+
+    QPainter painter(&img);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setRenderHint(QPainter::TextAntialiasing);
+
+    // 1. Grid Pen (Using your saved settings)
+    QPen gridPen(m_gridColor, m_gridLineWidth, Qt::DotLine);
+    painter.setPen(gridPen);
+
+    // 2. Dynamic Font Scaling
+    // Scales between 10pt and 16pt based on image height to stay proportional
+    int dynamicSize = qBound(10, img.height() / 33, 16);
+    QFont font("Arial", dynamicSize, QFont::Bold);
+    painter.setFont(font);
+
+    int w = img.width();
+    int h = img.height();
+    int centerX = w / 2;
+    int centerY = h / 2;
+    int maxPixelRadius = w / 2;
+
+    mirrorDlg *md = mirrorDlg::get_Instance();
+    double mirrorRadiusMM = md->diameter / 2.0;
+
+    // 3. Determine physics-to-pixel scale
+    double stepSizeMM = 0;
+    if (m_gridMode == GridMode::Millimeters) stepSizeMM = m_gridSpacing;
+    else if (m_gridMode == GridMode::Inches) stepSizeMM = m_gridSpacing * 25.4;
+    else if (m_gridMode == GridMode::Percentage) stepSizeMM = (m_gridSpacing / 100.0) * mirrorRadiusMM;
+
+    if (stepSizeMM <= 0) return;
+
+    // 4. Draw Rings and Labels
+    for (double currentMM = stepSizeMM; currentMM <= mirrorRadiusMM; currentMM += stepSizeMM) {
+        int rPx = (int)((currentMM / mirrorRadiusMM) * maxPixelRadius);
+
+        painter.setPen(gridPen);
+        painter.drawEllipse(QPoint(centerX, centerY), rPx, rPx);
+
+        if (m_showUnitLabels) {
+            QString label;
+            if (m_gridMode == GridMode::Millimeters)
+                label = QString::number(currentMM, 'f', 1);
+            else if (m_gridMode == GridMode::Inches)
+                label = QString::number(currentMM / 25.4, 'f', 2);
+            else
+                label = QString::number((currentMM / mirrorRadiusMM) * 100.0, 'f', 0) + "%";
+
+            // Determine initial Y position at the top of the ring
+            int yPos = centerY - rPx;
+
+            // EDGE CLIPPING FIX:
+            // If the label is too close to the top edge (within 30 pixels),
+            // shift it down so the text box doesn't get cut off.
+            if (yPos < 30) {
+                yPos = 30;
+            }
+
+            // Define a wide bounding box for the text
+            // Centered on X, and centered vertically on our adjusted yPos
+            QRect textRect(centerX - 60, yPos - 15, 120, 30);
+
+            // Draw shadow for legibility (Black offset)
+            painter.setPen(Qt::black);
+            painter.drawText(textRect.translated(1, 1), Qt::AlignCenter, label);
+
+            // Draw actual colored text from your settings
+            painter.setPen(m_textColor);
+            painter.drawText(textRect, Qt::AlignCenter, label);
+        }
+    }
+
+    // 5. Center Crosshair
+    painter.setPen(QPen(m_gridColor, 1, Qt::SolidLine));
+    painter.drawLine(centerX - 12, centerY, centerX + 12, centerY);
+    painter.drawLine(centerX, centerY - 12, centerX, centerY + 12);
+}
+void foucaultView::showSelectedRonchiImages(){
+
+    surfaceAnalysisTools *saTools = surfaceAnalysisTools::get_Instance();
+    QList<int> list = saTools->SelectedWaveFronts();
+
+    QList<wavefront*> wfs;
+
+    for (int i = 0; i < list.size(); ++i){
+        wfs << m_sm->m_wavefronts.at(list[i]);
+    }
+    generateBatchRonchiImage(wfs);
+}
+
+QImage *foucaultView::render(){
+    on_makePb_clicked();
+    QSize imsize = ui->foucaultViewLb->size();
+    imsize.setWidth(imsize.width()*2.1);
+    QImage *result = new QImage(imsize, QImage::Format_ARGB32 );
+
+    ui->ronchiViewLb->render(result,QPoint(0,0));
+    ui->foucaultViewLb->render(result, QPoint(imsize.width()/2,0));
+
+    return result;
+}
+
+void foucaultView::saveRonchiImage(){
+    const QPixmap pm = ui->ronchiViewLb->pixmap(Qt::ReturnByValue);
+    pm.save(getSaveFileName("foucault"));
+
+}
+void foucaultView::saveFoucaultImage(){
+    const QPixmap pm = ui->foucaultViewLb->pixmap(Qt::ReturnByValue);
+    pm.save(getSaveFileName("foucault"));
+}
+
+void foucaultView::setSurface(wavefront *wf){
+    QSettings set;
+    double offset = set.value("foucault roc offset", 0.).toDouble();
+    m_wf = wf;
+    mirrorDlg *md = mirrorDlg::get_Instance();
+    double rad = md->diameter/2.;
+    double FL = md->roc/2.;
+    double mul = (ui->useMM->isChecked()) ? 1. : 1/25.4;
+    m_sag = mul * (rad * rad) /( 4 * FL);
+    m_sag = round(100 * m_sag)/100.;
+    m_temp_sag = m_sag;     // used to set the zernike slider step size to make it appropriate to a faction of the sagitta.
+
+    ui->rocOffsetSb->blockSignals(true);
+    ui->rocOffsetSb->setValue(offset);
+    ui->rocOffsetSb->blockSignals(false);
+    on_autoStepSize_clicked(ui->autoStepSize->isChecked());
+    needsDrawing = true;
+}
+QVector<QPoint> scaleProfile(QPolygonF points, int width,
+                             double angle = 0.){
+    double left = points[0].x();
+    double right = points.back().x();
+    double max = 0;
+    double min=  1000000;
+    foreach(QPointF p, points){
+        if (p.y() < min)
+            min = p.y();
+        if (p.y() > max)
+            max = p.y();
+    }
+    double xdel = right - left;
+    double xscale = width/xdel;
+    double yscale =  (width/2);
+    QVector<QPoint> results;
+    double cosangle = cos(angle);
+    double sinangle = sin(angle);
+    foreach(QPointF p, points){
+        double x,y;
+        x = p.x() * xscale;
+        y = p.y() * -yscale;
+        double xx = x * cosangle - y * sinangle;
+        double yy  = x * sinangle + y * cosangle;
+        x  = xx + width/2;
+        y  = yy + width/2;
+
+        results << QPoint(x,y);
+
+    }
+    qDebug() << "profile points" << results;
+
+    return results;
+}
+
+
+QImage foucaultView::generateOpticalTestImage(OpticalTestType type, wavefront* wf, const OpticalTestSettings& s, bool bAutoCollimate)
+{
+    if (!wf || wf->data.cols == 0) return QImage();
+
+    // 1. Setup Constants
+    double pad = 1.1;
+    int size = (int(wf->data.cols * pad) / 2) * 2;
+    double actualPad = (double)size / wf->data.cols;
+    double moving_constant = (s.movingSource) ? 1.0 : 2.0;
+
+    mirrorDlg *md = mirrorDlg::get_Instance();
+    double unitMultiplyer = s.useMM ? 1.0 : 25.4;
+    double coc_offset_mm = s.rocOffset * unitMultiplyer;
+
+    // Physics geometry
+    double r2 = (md->diameter / 2.0) * (md->diameter / 2.0);
+    double b = md->roc + coc_offset_mm;
+    double pv = (sqrt(r2 + (md->roc * md->roc)) - (sqrt(r2 + b * b) - coc_offset_mm)) / (md->lambda * 1.E-6);
+    double z3 = pv / moving_constant;
+    double effectiveZ3 = (type == OpticalTestType::Ronchi) ? (s.ronchiX * z3) : z3;
+
+    // 2. Wavefront Prep
+    std::vector<double> originalZerns = wf->InputZerns;
+    std::vector<double> tempZerns = originalZerns;
+    tempZerns[3] -= 3 * tempZerns[8];
+    wf->InputZerns = tempZerns;
+
+    SimulationsView *sv = SimulationsView::getInstance(0);
+    sv->setSurface(wf);
+
+    bool oldDoNull = md->doNull;
+    if (bAutoCollimate == false)
+        md->doNull = false; // this is normal foucault/ronchi so we *don't* subtract the null (autcoCollimate ronchi or foucault mode will typically subtract the null)
+
+    cv::Mat surf_fft = sv->computeStarTest(s.heightMultiply * sv->nulledSurface(effectiveZ3), size, actualPad, true);
+
+    wf->InputZerns = originalZerns; // Restore state immediately
+    md->doNull = oldDoNull;
+
+    // 3. Mask Generation
+    cv::Mat mask = cv::Mat::zeros(size, size, CV_64FC1);
+    cv::Mat sourceSlit = cv::Mat::zeros(size, size, CV_64FC1);
+    int hx = (size - 1) / 2 + s.lateralOffset;
+    double pixwidth = s.outputLambda * 1.E-6 * (0.5 * md->roc / md->diameter) * 2. / (25.4 * actualPad);
+
+    if (type == OpticalTestType::Ronchi) {
+        double lpi_val = s.lpi * (s.useMM ? 25.4 : 1.0);
+        int ppl = std::max(1, (int)((0.5 / lpi_val) / pixwidth));
+        int start = (size / 2) - (ppl / 2);
+        bool even = ((start / ppl) % 2 == 0) != s.clearCenter;
+        int roffset_start = ppl - (start % ppl);
+
+        for (int y = 0; y < size; ++y) {
+            int line_no = 0, roffset = roffset_start;
+            for (int x = 0; x < size; ++x) {
+                if (((even && (line_no % 2 == 0)) || (!even && (line_no % 2 != 0)))) mask.at<double>(y, x) = 1.0;
+                if (++roffset >= ppl) { line_no++; roffset = 0; }
+                if (x > hx - ppl / 2. && x < hx + ppl / 2.) sourceSlit.at<double>(y, x) = 1.0;
+            }
+        }
+    } else {
+        double slitWidthHalf = (.001 / pixwidth) * s.slitWidth * 1000 * (s.useMM ? 1./25.4 : 1.0);
+        for (int y = 0; y < size; ++y) {
+            double ry = double(y - hx) / hx;
+            for (int x = 0; x < size; ++x) {
+                if (sqrt(pow(double(x - hx)/hx, 2) + ry*ry) <= 1.0 && std::abs(x - hx) < slitWidthHalf) sourceSlit.at<double>(y, x) = 255.0;
+                int k_side = s.knifeOnLeft ? (size - x) : x;
+                if (k_side > hx) mask.at<double>(y, x) = 255.0;
+            }
+        }
+    }
+
+    // 4. DFT Pipeline
+    cv::Mat FFT1, FFT2, complexMask, complexSlit, combinedFilter, finalResult;
+    cv::Mat planesM[] = {mask, cv::Mat::zeros(mask.size(), CV_64FC1)};
+    cv::Mat planesS[] = {sourceSlit, cv::Mat::zeros(sourceSlit.size(), CV_64FC1)};
+    cv::merge(planesM, 2, complexMask);
+    cv::merge(planesS, 2, complexSlit);
+
+    cv::dft(complexMask, FFT1, cv::DFT_REAL_OUTPUT);
+    cv::dft(complexSlit, FFT2, cv::DFT_REAL_OUTPUT);
+    if (type == OpticalTestType::Ronchi) { shiftDFT(FFT1); shiftDFT(FFT2); }
+
+    cv::mulSpectrums(FFT1, FFT2, combinedFilter, 0, true);
+    cv::idft(combinedFilter, combinedFilter, cv::DFT_SCALE);
+    if (type == OpticalTestType::Ronchi) shiftDFT(combinedFilter);
+
+    cv::mulSpectrums(combinedFilter, surf_fft, finalResult, 0, true);
+    cv::idft(finalResult, finalResult, cv::DFT_SCALE);
+    if (type == OpticalTestType::Ronchi) shiftDFT(finalResult);
+
+    // 5. Output Image
+    QImage res = showMag(finalResult, false, "", false, s.gamma);
+    int startx = size - wf->data.cols;
+    return res.copy(startx, startx, wf->data.cols, wf->data.cols).mirrored(true, false);
+}
+
+
+void foucaultView::on_makePb_clicked()
+{
+    m_guiTimer.stop();
+    if (m_wf == nullptr || m_wf->data.cols == 0)
+        return;
+
+    if (mirrorDlg::get_Instance()->isEllipse()){
+        QMessageBox::warning(0,"warning","Foucaualt is not suppported for flat surfaces");
+        return;
+    }
+
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+
+
+    // 1. Pack the current UI state into the settings struct
+    OpticalTestSettings settings;
+    settings.rocOffset    = ui->rocOffsetSb->value();
+    settings.ronchiX      = ui->RonchiX->value();
+    settings.lpi          = ui->lpiSb->value();
+    settings.gamma        = ui->gammaSb->value();
+    settings.slitWidth    = ui->slitWidthSb->value();
+    settings.useMM        = ui->useMM->isChecked();
+    settings.movingSource = ui->movingSourceRb->isChecked();
+    settings.knifeOnLeft  = ui->knifeOnLeftCb->isChecked();
+    settings.clearCenter  = ui->clearCenterCb->isChecked();
+
+    // Pass the class members that aren't driven by UI widgets
+    settings.heightMultiply = this->heightMultiply;
+    settings.lateralOffset  = this->lateralOffset;
+    settings.outputLambda   = outputLambda;
+
+    // 2. Call the refactored static engine for both images
+    QImage ronchiImg = generateOpticalTestImage(OpticalTestType::Ronchi, m_wf, settings, ui->autocollimation->isChecked());
+    QImage foucaultImg = generateOpticalTestImage(OpticalTestType::Foucault, m_wf, settings, ui->autocollimation->isChecked());
+
+    // Store for potential saving/external access
+    m_foucaultQimage = foucaultImg;
+
+    // 3. UI Painting Helper (to avoid duplicating the Painter logic)
+    auto paintAndDisplay = [&](QLabel* label, const QImage& img, double offsetValue) {
+        if (img.isNull()) return;
+
+        QSize s = label->size();
+            QImage displayImg = img.scaled(s, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+
+            // Overlay grid
+            drawGridOverlay(displayImg);
+
+        QPixmap pix = QPixmap::fromImage(displayImg);
+        QPainter painter(&pix);
+        painter.save();
+        painter.setPen(QPen(QColor(Qt::white)));
+        painter.setFont(QFont("Arial", 15));
+
+        QString unit = ui->useMM->isChecked() ? "mm" : "in";
+        QString zStr = QString("%1 %2").arg(offsetValue, 6, 'f', 3).arg(unit);
+        painter.drawText(20, 40, zStr);
+
+        if (ui->overlayProfile->isChecked()) {
+            QPolygonF profile = m_sm->m_profilePlot->createProfile(1.0, m_wf);
+            // Assuming scaleProfile is a helper accessible in this scope
+            QVector<QPoint> profilePoints = scaleProfile(profile, pix.width(), M_PI/4.0);
+            painter.setPen(QPen(QColor(Qt::yellow), 3));
+            painter.drawLines(profilePoints);
+        }
+        painter.restore();
+        label->setPixmap(pix);
+    };
+
+    // 4. Update the actual labels
+    paintAndDisplay(ui->ronchiViewLb, ronchiImg, settings.ronchiX * settings.rocOffset);
+    paintAndDisplay(ui->foucaultViewLb, foucaultImg, settings.rocOffset);
+
+    QApplication::restoreOverrideCursor();
+}
+
+
+void foucaultView::generateBatchRonchiImage(const QList<wavefront*>& wavefrontList)
+{
+    // 1. Initial Checks
+    if (wavefrontList.isEmpty() || !m_wf) return;
+
+    // 2. Ask user for Grid Layout
+    bool ok;
+    int cols = QInputDialog::getInt(this, tr("Batch Ronchi"),
+                                    tr("Number of columns:"), 2, 1, 10, 1, &ok);
+    if (!ok) return;
+
+    // 3. Prepare Optical Settings from UI
+    OpticalTestSettings s;
+    s.rocOffset      = ui->rocOffsetSb->value();
+    s.ronchiX        = ui->RonchiX->value();
+    s.lpi            = ui->lpiSb->value();
+    s.gamma          = ui->gammaSb->value();
+    s.slitWidth      = ui->slitWidthSb->value();
+    s.useMM          = ui->useMM->isChecked();
+    s.movingSource   = ui->movingSourceRb->isChecked();
+    s.knifeOnLeft    = ui->knifeOnLeftCb->isChecked();
+    s.clearCenter    = ui->clearCenterCb->isChecked();
+    s.heightMultiply = this->heightMultiply;
+    s.lateralOffset  = this->lateralOffset;
+    s.outputLambda   = outputLambda;
+
+    // 4. Calculate Grid and Canvas Geometry
+    int count = wavefrontList.size();
+    int rows = (count + cols - 1) / cols;
+    int imgDim = m_wf->data.cols;
+
+    int headerHeight = 70;
+    int textBuffer = 40;
+    int cellW = imgDim;
+    int cellH = imgDim + textBuffer;
+
+    QImage canvas(cellW * cols, (cellH * rows) + headerHeight, QImage::Format_RGB32);
+    canvas.fill(Qt::black);
+
+    QPainter painter(&canvas);
+    painter.setRenderHint(QPainter::Antialiasing);
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+
+    QList<QImage> individualRonchis;
+    QList<QString> names;
+
+    // 5. Draw Simulation Header
+    painter.setPen(Qt::white);
+    painter.setFont(QFont("Arial", 12, QFont::Bold));
+    QString unit = s.useMM ? "mm" : "in";
+    QString headerText = QString("Ronchi Analysis | LPI: %1 | Offset: %2 %3")
+                         .arg(s.lpi).arg(s.rocOffset).arg(unit);
+    painter.drawText(20, 35, headerText);
+
+    painter.setPen(QPen(Qt::gray, 2));
+    painter.drawLine(10, headerHeight - 15, canvas.width() - 10, headerHeight - 15);
+
+    // 6. Loop through and Render Ronchi Patterns
+    painter.setFont(QFont("Arial", 11, QFont::Bold));
+    QFontMetrics fm(painter.font());
+
+    for (int i = 0; i < count; ++i) {
+        wavefront* currentWf = wavefrontList[i];
+        int row = i / cols;
+        int col = i % cols;
+
+        // Generate the raw Ronchi image
+        QImage ronchi = generateOpticalTestImage(OpticalTestType::Ronchi, currentWf, s, ui->autocollimation->isChecked());
+
+        if (!ronchi.isNull()) {
+            // STORE RAW: Add to list for the Compare Dialog (Prevents crash & artifacting)
+            individualRonchis.append(ronchi);
+
+            // STORE NAME: Essential for the Compare Dialog to avoid out-of-bounds crash
+            QFileInfo fileInfo(currentWf->name);
+            QString displayName = fileInfo.baseName();
+            names.append(displayName);
+
+            // GRID OVERLAY: Apply only to a copy for the batch preview canvas
+            QImage displayCopy = ronchi;
+            if (m_gridMode != GridMode::None) {
+                drawGridOverlay(displayCopy);
+            }
+
+            int xPos = col * cellW;
+            int yPos = headerHeight + (row * cellH);
+
+            painter.drawImage(xPos, yPos, displayCopy);
+
+            // Draw Label on Canvas
+            int textWidth = fm.horizontalAdvance(displayName);
+            int xText = xPos + (cellW - textWidth) / 2;
+            int yText = yPos + imgDim + (textBuffer / 2) + (fm.ascent() / 2);
+
+            painter.setPen(Qt::yellow);
+            painter.drawText(xText, yText, displayName);
+        }
+    }
+    painter.end();
+    QApplication::restoreOverrideCursor();
+
+    // 7. Configure Preview Dialog
+    QScreen *screen = QGuiApplication::primaryScreen();
+    int dlgW = static_cast<int>(screen->availableGeometry().width() * 0.75);
+    int dlgH = static_cast<int>(screen->availableGeometry().height() * 0.85);
+
+    QDialog previewDlg(this);
+    previewDlg.setWindowTitle(tr("Batch Ronchi Analysis Preview"));
+    previewDlg.resize(dlgW, dlgH);
+
+    QVBoxLayout *layout = new QVBoxLayout(&previewDlg);
+    QScrollArea *scroll = new QScrollArea(&previewDlg);
+    scroll->setWidgetResizable(true);
+    scroll->setAlignment(Qt::AlignCenter);
+
+    QLabel *imgLabel = new QLabel();
+    imgLabel->setAlignment(Qt::AlignCenter);
+    scroll->setWidget(imgLabel);
+    layout->addWidget(scroll);
+
+    // 8. Zoom Slider
+    QPixmap previewPixmap = QPixmap::fromImage(canvas);
+    QHBoxLayout *zoomLayout = new QHBoxLayout();
+    QSlider *slider = new QSlider(Qt::Horizontal);
+    slider->setRange(10, 400);
+    slider->setValue(100);
+
+    QLabel *zoomValueLabel = new QLabel("100%");
+    zoomLayout->addWidget(new QLabel(tr("Zoom: ")));
+    zoomLayout->addWidget(slider);
+    zoomLayout->addWidget(zoomValueLabel);
+    layout->addLayout(zoomLayout);
+
+    auto updateZoom = [previewPixmap, imgLabel, zoomValueLabel, dlgW](int val) {
+        int targetWidth = (dlgW - 80) * val / 100;
+        QPixmap scaled = previewPixmap.scaledToWidth(targetWidth, Qt::SmoothTransformation);
+        imgLabel->setPixmap(scaled);
+        imgLabel->setFixedSize(scaled.size());
+        zoomValueLabel->setText(QString("%1%").arg(val));
+    };
+
+    connect(slider, &QSlider::valueChanged, updateZoom);
+    updateZoom(100);
+
+    // 9. Buttons
+    QHBoxLayout *btns = new QHBoxLayout();
+    QPushButton *compareBtn = new QPushButton(tr("Compare Top Two Patterns"));
+    compareBtn->setIcon(style()->standardIcon(QStyle::SP_BrowserReload));
+    compareBtn->setEnabled(individualRonchis.size() >= 2);
+
+    QPushButton *saveBtn = new QPushButton(tr("Save Grid Image"));
+    QPushButton *cancelBtn = new QPushButton(tr("Close"));
+
+    btns->addWidget(compareBtn);
+    btns->addStretch();
+    btns->addWidget(saveBtn);
+    btns->addWidget(cancelBtn);
+    layout->addLayout(btns);
+
+    // Comparison Trigger (Uses captured lists)
+    connect(compareBtn, &QPushButton::clicked, &previewDlg, [=, &previewDlg]() {
+        if (individualRonchis.size() >= 2 && names.size() >= 2) {
+            RonchiCompareDialog compDlg(individualRonchis[0], names[0],
+                                        individualRonchis[1], names[1], &previewDlg);
+            compDlg.exec();
+        }
+    });
+
+    connect(saveBtn, &QPushButton::clicked, &previewDlg, &QDialog::accept);
+    connect(cancelBtn, &QPushButton::clicked, &previewDlg, &QDialog::reject);
+
+    if (previewDlg.exec() == QDialog::Accepted) {
+        QString path = QFileDialog::getSaveFileName(this, tr("Save Ronchi Grid"),
+                                                    imageDir, tr("Images (*.png *.jpg)"));
+        if (!path.isEmpty()) {
+            canvas.save(path);
+        }
+    }
+}
+
+void foucaultView::on_gammaSb_valueChanged(double /*arg1*/)
+{
+      m_guiTimer.start(500);
+}
+
+void foucaultView::on_lpiSb_valueChanged(double arg1)
+{
+    QSettings set;
+    set.setValue("ronchiLPI", (ui->useMM->isChecked()) ? arg1 * 25.4: arg1);
+      //m_guiTimer.start(500);
+}
+
+void foucaultView::on_movingSourceRb_clicked(bool /*unused*/)
+{
+     m_guiTimer.start(500);
+}
+
+void foucaultView::on_radioButton_2_clicked()
+{
+     m_guiTimer.start(500);
+}
+
+void foucaultView::on_knifeOnLeftCb_clicked()
+{
+     m_guiTimer.start(500);
+}
+
+void foucaultView::on_lpiSb_editingFinished()
+{
+    m_guiTimer.start(500);
+}
+
+void foucaultView::on_rocOffsetSb_editingFinished()
+{
+    double val = ui->rocOffsetSb->value();
+    double step = m_temp_sag/40;
+
+    int pos = val / step;
+    ui->rocOffsetSlider->blockSignals(true);
+    ui->rocOffsetSlider->setValue(pos);
+    ui->rocOffsetSlider->blockSignals(false);
+    QSettings set;
+    set.setValue("foucault roc offset", val);
+
+    m_guiTimer.start(500);
+}
+
+void foucaultView::on_slitWidthSb_editingFinished()
+{
+    m_guiTimer.start(500);
+}
+
+
+
+void foucaultView::on_useMM_clicked(bool checked)
+{
+    double mul = 25.4;
+    if ( !checked)
+        mul = 1./25.4;
+
+    QSettings set;
+    set.setValue("simUseMM", checked);
+    QString suffix = (checked) ? " mm" : " in";
+    ui->rocOffsetSb->setValue( ui->rocOffsetSb->value() * mul);
+    ui->rocOffsetSb->setSuffix(suffix);
+    ui->slitWidthSb->setValue(ui->slitWidthSb->value() * mul);
+    ui->slitWidthSb->setSuffix(suffix);
+    ui->lpiSb->setValue(ui->lpiSb->value() / mul);
+    ui->gridGroupBox->setTitle((checked) ? "Ronchi LPmm ": "Ronchi LPI ");
+ //qDebug() << ui->rocStepSize->value() << mul << xx;
+    ui->rocStepSize->setValue( mul * ui->rocStepSize->value());
+    ui->scanEndOffset->setValue (mul * ui->scanEndOffset->value());
+    ui->scanStart->setValue(mul * ui->scanStart->value());
+    //on_autoStepSize_clicked(ui->autoStepSize->isChecked());
+         //qDebug() << "xx" << ui->rocStepSize->value();
+         draw_ROC_Scale();
+
+    m_guiTimer.start(500);
+
+}
+bool inscan = false;
+void foucaultView::on_scanPb_clicked()
+{
+    if (inscan == true){
+        inscan = false;
+        qDebug() << "abort scan";
+        return;
+    }
+    qDebug() << "scan running";
+    inscan = true;
+    ui->scanPb->setText("Abort");
+    qApp->processEvents();
+    double start = ui->scanStart->value();
+    double end = ui->scanEndOffset->value();
+    double step = ui->scanSteps->value();
+    if (step == 0)
+       step = .001;
+    foucaultView *fv = foucaultView::get_Instance(0);
+    int cnt = 0;
+    QSettings settings;
+    for (double v = start; v <= end; v += step){
+
+        ui->rocOffsetSb->setValue(v);
+        double st = (ui->useMM->isChecked()) ? 24.5 * m_temp_sag/40 : m_temp_sag/40;
+
+        int pos = v / st;
+        ui->rocOffsetSlider->blockSignals(true);
+        ui->rocOffsetSlider->setValue(pos);
+        ui->rocOffsetSlider->blockSignals(false);
+        on_makePb_clicked();
+
+        QImage fvImage = QImage(fv->size(),QImage::Format_ARGB32 );
+
+        QPainter p3(&fvImage);
+        fv->QWidget::render(&p3);
+        if (ui->SaveImageCB->isChecked()){
+            QString num = QString("%1").arg(v, 6, 'f', 4).replace(".","_");
+            num.replace("-","n");
+            QString fvpng = QString("%1//%2.png").arg(imageDir).arg(cnt++, 6, 10, QLatin1Char('0'));
+            qDebug() << "fn"<< fvpng;
+            if (ui->saveOnlyFouccault->isChecked()){
+                fv->m_foucaultQimage.save(fvpng);
+            }
+            else {
+                fvImage.save(fvpng);
+            }
+        }
+        qApp->processEvents();
+        if (inscan == false) {
+            qDebug() << "asked to abort";
+            break;
+        }
+
+    }
+    ui->scanPb->setText("Scan");
+    inscan = false;
+}
+
+void foucaultView::on_h1x_clicked()
+{
+    heightMultiply = 1;
+    m_guiTimer.start(500);
+}
+
+void foucaultView::on_h2x_clicked()
+{
+    heightMultiply = 2;
+    m_guiTimer.start(500);
+}
+
+void foucaultView::on_h4x_clicked()
+{
+    heightMultiply = 4;
+    m_guiTimer.start(500);
+}
+
+
+
+void foucaultView::on_rocOffsetSlider_valueChanged(int value)
+{
+
+    double step = getStep();
+    double offset = (value) * step;
+    QSettings set;
+
+    set.setValue("foucault roc offset", offset);
+
+    ui->rocOffsetSb->setValue(offset);
+    m_guiTimer.start(1000);
+
+}
+inline double foucaultView::getStep(){
+    // slider has 40 positive positions and 40 neg positions.
+    // A slider step then is sag / 40
+    return (ui->autoStepSize->isChecked())? round(1000. * ((ui->useMM->isChecked()) ? 25.4 * m_temp_sag/40. : m_sag/40))/1000. :
+                                            ui->rocStepSize->value();
+}
+
+void foucaultView::on_clearCenterCb_clicked()
+{
+        m_guiTimer.start(100);
+}
+void foucaultView::draw_ROC_Scale(){
+    // create 17 labels where each label is 5 steps apart.
+    double step = getStep();
+    for (int i = 0; i< 17; ++i){
+        double val =  (i - 8) * step * 5;  // label slider every 5 steps.
+        findChild<QLabel *>(QString("l%1").arg(i))->setText(QString::number(val));
+    }
+}
+
+void foucaultView::on_autoStepSize_clicked(bool checked)
+{
+
+    ui->rocStepSize->setEnabled(!checked);
+
+    double step = getStep();
+
+    if (checked){
+        m_temp_sag = m_sag;
+        ui->rocStepSize->setValue(step);
+    }
+    else
+        m_temp_sag = 40 * step;
+
+    draw_ROC_Scale();
+}
+
+void foucaultView::on_rocStepSize_editingFinished()
+{
+    on_autoStepSize_clicked(ui->autoStepSize->isChecked());
+    m_guiTimer.start(100);
+}
+
+void foucaultView::on_lateralOffset_valueChanged(int arg1)
+{
+    lateralOffset = arg1;
+    m_guiTimer.start(100);
+}
+
+void foucaultView::on_SaveImageCB_clicked(bool checked)
+{
+    if (!checked)
+        return;
+    QSettings settings;
+    imageDir = settings.value("lastPath","").toString();
+
+    QString dir = QFileDialog::getExistingDirectory(this, tr("Directory where images are to be saved"),
+                                                 imageDir,
+                                                 QFileDialog::ShowDirsOnly
+                                                 | QFileDialog::DontResolveSymlinks);
+    if (!dir.isEmpty())
+        imageDir = dir;
+}
+
+void foucaultView::on_overlayProfile_stateChanged(int /*arg1*/)
+{
+    on_makePb_clicked();
+}
+
+
+void foucaultView::on_RonchiX_valueChanged(double arg1)
+{
+    QSettings set;
+    set.setValue("RonchiROCFactor", arg1);
+     m_guiTimer.start(450);
+}
+
+
+void foucaultView::on_pushButton_clicked()
+{
+    mirrorDlg *md = mirrorDlg::get_Instance();
+    double rad = md->diameter/2.;
+    double FL = md->roc/2.;
+    double mul = (ui->useMM->isChecked()) ? 1. : 1/25.4;
+    m_sag = mul * (rad * rad) /( 4 * FL);
+    m_sag = round(100 * m_sag)/100.;
+    m_temp_sag = m_sag;
+    ui->rocOffsetSlider->blockSignals(true);
+    ui->rocOffsetSlider->setValue((m_sag/2.)/getStep());
+    ui->rocOffsetSlider->blockSignals(false);
+    double offset = (m_sag/2);
+    QSettings set;
+    set.setValue("foucault roc offset", offset);
+    ui->rocOffsetSb->blockSignals(true);
+    ui->rocOffsetSb->setValue(offset);
+    ui->rocOffsetSb->blockSignals(false);
+    on_autoStepSize_clicked(ui->autoStepSize->isChecked());
+    needsDrawing = true;
+    on_makePb_clicked();
+}
+
+
+
+
+
+void foucaultView::on_autocollimation_clicked(bool checked)
+{
+    if (checked)
+        ui->h2x->setChecked(true);
+    else
+        ui->h1x->setChecked(true);
+    on_makePb_clicked();
+}
+

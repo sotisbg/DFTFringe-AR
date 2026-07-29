@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Package>
+    <DisplayName>DFTFringe</DisplayName>
+    <Description>Install DFTFringe</Description>
+    <Version>MY_AUTOMATED_VERSION_STRING</Version>
+    <ReleaseDate>MY_AUTOMATED_DATE_STRING</ReleaseDate>
+    <Default>true</Default>
+    <Script>installscript.qs</Script>
+    <UserInterfaces>
+        <UserInterface>desktopshortcutcheckboxform.ui</UserInterface>
+    </UserInterfaces>
+</Package>

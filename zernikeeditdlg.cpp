@@ -1,0 +1,213 @@
+#include "zernikeeditdlg.h"
+#include "ui_zernikeeditdlg.h"
+#include <QFileDialog>
+#include <fstream>
+#include "zernikeprocess.h"
+#include "zernikepolar.h"
+#include "mirrordlg.h"
+#include "myutils.h"
+zernikeEditDlg::zernikeEditDlg(SurfaceManager * sfm, QWidget *parent) :
+    QDialog(parent),
+    ui(new Ui::zernikeEditDlg), m_sm(sfm), shouldEnableAll(false)
+{
+    ui->setupUi(this);
+    zernikeProcess &zp = *zernikeProcess::get_Instance();
+    m_noOfTerms = zp.getNumberOfTerms();
+    m_zernEnables = std::vector<bool>(m_noOfTerms);
+    tableModel = new ZernTableModel(parent, &m_zernEnables, true);
+    std::vector<double> val(m_noOfTerms,0.);
+    ui->tableView->setModel(tableModel);
+    QSettings set;
+    m_maxOrder = set.value("Zern maxOrder", 10).toInt();
+    ui->maxOrder->setValue(m_maxOrder);
+    ui->numberOfTerms->setText(QString("%1 Terms").arg(m_noOfTerms));
+
+}
+
+zernikeEditDlg::~zernikeEditDlg()
+{
+    delete ui;
+}
+
+void zernikeEditDlg::on_disable_clicked()
+{
+    int start = 0;
+    if (shouldEnableAll)
+        start = 8;
+
+    for (unsigned int i = start; i < m_zernEnables.size(); ++i)
+        m_zernEnables[i] = shouldEnableAll;
+
+    m_zernEnables[4] = shouldEnableAll;
+    m_zernEnables[5] = shouldEnableAll;
+    shouldEnableAll = !shouldEnableAll;
+    ui->disable->setText((shouldEnableAll) ? "Enable All":"Disable All");
+    tableModel->update();
+}
+
+void zernikeEditDlg::on_createSurface_clicked()
+{
+    int size = ui->sizeSb->value();
+    cv::Mat result = cv::Mat::zeros(size,size, numType);
+
+    double xcen = (size -1)/2.;
+    double ycen = xcen;
+    double rad = xcen - 1;
+
+    // Build the surface using the general zpmC engine (arbitrary max order) instead
+    // of zernikePolar, which is hard-capped at 49 terms (order 12) and throws
+    // std::out_of_range for higher terms -> crash when max order > 12.
+    // The polynomial basis and ordering are identical to zernikePolar up to term 48,
+    // so results for order <= 12 are unchanged.
+    zernikeProcess &zp = *zernikeProcess::get_Instance();
+    zp.setMaxOrder(m_maxOrder);
+
+    const int nterms = tableModel->rowCount();
+
+    // collect every pixel inside the unit disk
+    std::vector<double> rhov, thetav;
+    std::vector<int> rows, cols;
+    for (int y = 0; y < size; ++y)
+    {
+        double uy = (double)(y - ycen) / rad;
+        for (int x = 0; x < size; ++x)
+        {
+            double ux = (double)(x - xcen) / rad;
+            double rho = sqrt(ux * ux + uy * uy);
+            if (rho <= 1.)
+            {
+                rhov.push_back(rho);
+                thetav.push_back(atan2(uy, ux));
+                rows.push_back(y);
+                cols.push_back(x);
+            }
+        }
+    }
+
+    if (!rhov.empty())
+    {
+        arma::rowvec r(rhov);
+        arma::rowvec t(thetav);
+        arma::mat zerns = zp.zpmC(r, t, m_maxOrder);   // [npoints x ncol]
+        const int ncol = static_cast<int>(zerns.n_cols);
+
+        for (std::size_t i = 0; i < rhov.size(); ++i)
+        {
+            double s1 = 0.;
+            for (int z = 0; z < nterms && z < ncol
+                    && z < static_cast<int>(m_zernEnables.size()); ++z)
+            {
+                if (m_zernEnables[z])
+                    s1 += tableModel->values[z] * zerns(i, z);
+            }
+            result.at<double>(rows[i], cols[i]) = s1;
+        }
+    }
+
+    m_sm->createSurfaceFromPhaseMap(result, CircleOutline(QPointF(xcen,ycen),rad),
+                                                CircleOutline(QPointF(0,0),0),
+                                                QString("Zernike_Wavefront"), WavefrontOrigin::Zernikes);
+}
+
+void zernikeEditDlg::on_clearAll_clicked()
+{
+    tableModel->blockSignals(true);
+    for (unsigned int i = 0; i < Z_TERMS; ++i){
+            tableModel->values[i] =0.;
+    }
+    tableModel->update();
+    tableModel->blockSignals(false);
+}
+
+void zernikeEditDlg::on_read_clicked()
+{
+    QSettings settings;
+    QString lastPath = settings.value("lastPath",".").toString();
+    QString fileName = QFileDialog::getOpenFileName(this,
+                        tr("Read zernike file"), lastPath,
+                        tr("Zernike File (*.zrn)"));
+    if (fileName.isEmpty())
+        return;
+
+    std::ifstream infile(fileName.toStdString().c_str());
+    std::vector<double> z;
+    while (infile)
+    {
+        double v;
+        infile >> v;
+        z.push_back(v);
+    }
+    for (int i = z.size(); i < Z_TERMS; ++i){
+        z.push_back(0.);
+    }
+    tableModel->setValues(z, false);
+    tableModel->update();
+
+}
+
+void zernikeEditDlg::on_save_clicked()
+{
+    QSettings settings;
+    QString lastPath = settings.value("lastPath",".").toString();
+    QString fileName = QFileDialog::getSaveFileName(this,
+                        tr("Save zernike file"), lastPath,
+                        tr("Zernike File (*.zrn)"));
+    if (fileName.isEmpty())
+        return;
+
+    std::ofstream ofile(fileName.toStdString().c_str());
+
+    for (unsigned int i = 0; i < tableModel->values.size(); ++i){
+        ofile << tableModel->values[i] << std::endl;
+    }
+    ofile.close();
+}
+extern std::vector<bool> zernEnables;
+void zernikeEditDlg::on_useCurrent_clicked()
+{
+    if (m_sm->m_wavefronts.size() ==0 ) {
+        QMessageBox::warning(0,"No wave fronts available!", "First load or create a wave front");
+        return;
+    }
+    wavefront *wf = m_sm->m_wavefronts[m_sm->m_currentNdx];
+
+    // Re-fit the current wavefront to the max order selected in this dialog.
+    // wf->InputZerns is fitted with zernikePolar which is capped at Z_TERMS (49,
+    // i.e. order 12); ZernFitWavefront uses zpmC and honours m_maxOrder, so at
+    // order 22 it returns all (maxOrder/2+1)^2 = 144 coefficients in the same
+    // sequential order as the .zrn file. This is what makes a later Save write
+    // the actually-selected number of terms.
+    zernikeProcess &zp = *zernikeProcess::get_Instance();
+    zp.setMaxOrder(m_maxOrder);
+    std::vector<double> zs = zp.ZernFitWavefront(*wf);
+    if (zs.empty())        // fit cancelled by the user
+        return;
+
+    m_zernEnables.assign(zs.size(), true);
+    tableModel->blockSignals(true);
+    tableModel->setValues(zs, wf->useSANull);
+    ui->sizeSb->setValue(wf->data.cols);
+    tableModel->blockSignals(false);
+    tableModel->update();
+}
+
+
+
+void zernikeEditDlg::on_maxOrder_valueChanged(int arg1)
+{
+    QSettings set;
+
+    if (arg1 % 2 != 0)
+        ++arg1;
+    ui->maxOrder->setValue( arg1);
+    m_maxOrder = arg1;
+    set.setValue("Zern maxOrder", arg1);
+    zernikeProcess &zp = *zernikeProcess::get_Instance();
+    zp.setMaxOrder(arg1);
+    m_noOfTerms = zp.getNumberOfTerms();
+    ui->numberOfTerms->setText(QString("%1 Terms").arg(m_noOfTerms));
+    tableModel->resizeRows(m_noOfTerms);
+    m_zernEnables.resize(m_noOfTerms, true);   // keep enables in sync with the term count
+    emit termCountChanged(m_noOfTerms);
+}
+

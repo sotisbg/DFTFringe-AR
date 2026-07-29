@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>subtractWavefronatsDlg</class>
+ <widget class="QDialog" name="subtractWavefronatsDlg">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>487</width>
+    <height>509</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>Subtract wavefronts</string>
+  </property>
+  <layout class="QVBoxLayout" name="verticalLayout">
+   <item>
+    <widget class="QLabel" name="label">
+     <property name="text">
+      <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Select wavefront to be subtracted from the currently viewed wavefront. &lt;/p&gt;&lt;p&gt;&lt;span style=&quot; font-weight:700;&quot;&gt;When to check the &amp;quot;Use softwar Null after subtraction&amp;quot;.&lt;/span&gt;&lt;/p&gt;&lt;p&gt;When you subtract two wavefronts that both needed to have SA software null subtracted from them because for example the interferogram that made them was taken at ROC of the mirror under test, the result will have not have the original SA in it. Usually that is what you want. You just want to see the difference. In that case do not check the box.&lt;/p&gt;&lt;p&gt;If you are using the subtraction operation to remove system errors, for example if you have a test stand only induced wave front you want to subtract from the selected wave front  then you want to &lt;span style=&quot; font-weight:700;&quot;&gt;check that box&lt;/span&gt;.&lt;/p&gt;&lt;p&gt;&lt;br/&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+     </property>
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QListWidget" name="listWidget"/>
+   </item>
+   <item>
+    <widget class="QCheckBox" name="useNullCb">
+     <property name="toolTip">
+      <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;When you subtract two wavefronts that both needed to have SA software null subtracted from them because the interferogram that &lt;/p&gt;&lt;p&gt;made them was taken at ROC of the mirror under test, the result will have not have the original SA in it.&lt;/p&gt;&lt;p&gt;As a result subtracting the artificial null will artificially change the SA of the result. Usually you don't want that to happen.&lt;/p&gt;&lt;p&gt;So in this case do not check this check box. The result is only temporary for the current wavefront. If the wavefront&lt;/p&gt;&lt;p&gt;is operatied on again the null will subtracted from it.&lt;/p&gt;&lt;p&gt;&lt;br/&gt;&lt;/p&gt;&lt;p&gt;However if you are using the subtraction operation to remove system errors for example then you want to have this check box checked.&lt;/p&gt;&lt;p&gt;&lt;br/&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+     </property>
+     <property name="text">
+      <string>Use Software Null after subtraction</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QDialogButtonBox" name="buttonBox">
+     <property name="orientation">
+      <enum>Qt::Horizontal</enum>
+     </property>
+     <property name="standardButtons">
+      <set>QDialogButtonBox::Cancel|QDialogButtonBox::Ok</set>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections>
+  <connection>
+   <sender>buttonBox</sender>
+   <signal>accepted()</signal>
+   <receiver>subtractWavefronatsDlg</receiver>
+   <slot>accept()</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>248</x>
+     <y>254</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>157</x>
+     <y>274</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
+   <sender>buttonBox</sender>
+   <signal>rejected()</signal>
+   <receiver>subtractWavefronatsDlg</receiver>
+   <slot>reject()</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>316</x>
+     <y>260</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>286</x>
+     <y>274</y>
+    </hint>
+   </hints>
+  </connection>
+ </connections>
+</ui>
