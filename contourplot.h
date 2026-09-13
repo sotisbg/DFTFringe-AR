@@ -58,6 +58,13 @@ public:
     QRectF adjustRectToAspectRatio(double baseWidth, double baseHeight,
                                     double canvasWidth, double canvasHeight) const;
     void updateAspectRatio();
+    // Same thing, but for the rectangle an image is about to be rendered
+    // into.  QwtPlotRenderer never touches the widget: it activates the
+    // layout for the target rect and draws from that, so the canvas of the
+    // widget - which is what updateAspectRatio() measures - is not what the
+    // picture is drawn in, and on a plot that was never shown it may not
+    // even have been laid out.
+    void updateAspectRatioForRect(const QRectF &rect);
     bool m_minimal; // when true, hide axes and colorbar
     bool m_linkProfile;
     QPen m_rulerPen;

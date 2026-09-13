@@ -726,6 +726,25 @@ QRectF ContourPlot::adjustRectToAspectRatio(
     return QRectF(x1, y1, x2 - x1, y2 - y1);
 }
 
+void ContourPlot::updateAspectRatioForRect(const QRectF &rect)
+{
+    if (m_wf == nullptr || rect.width() < 10. || rect.height() < 10.)
+        return;
+
+    // Ask the layout where the canvas would land inside this rect - the same
+    // question QwtPlotRenderer asks - and fit the data to that.
+    plotLayout()->activate(this, rect);
+    const QRectF cr = plotLayout()->canvasRect();
+    if (cr.width() < 5. || cr.height() < 5.)
+        return;
+
+    const QRectF adjusted = adjustRectToAspectRatio(m_wf->data.cols, m_wf->data.rows,
+                                                    cr.width(), cr.height());
+    setAxisScale(QwtPlot::xBottom, adjusted.left(), adjusted.right());
+    setAxisScale(QwtPlot::yLeft,  adjusted.top(), adjusted.bottom());
+    replot();
+}
+
 void ContourPlot::updateAspectRatio()
 {
     static bool isReentering = false;
