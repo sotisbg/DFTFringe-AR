@@ -2318,7 +2318,9 @@ textres SurfaceManager::Phase2(QList<rotationDef *> list, QList<wavefront *> inp
         // make plot of stand astig
         QwtPlotCurve *curve = new QwtPlotCurve(QString().number(list[i]->angle));
 
-        QColor color(Qt::GlobalColor( 7 + i%13 ) );
+        // 7..18 are the real colours; 19 is Qt::transparent, which made
+        // the thirteenth rotation invisible.
+        QColor color(Qt::GlobalColor( 7 + i%12 ) );
         QPen pen(color);
         curve->setPen(pen);
         curve->attach(pl1);
@@ -2362,7 +2364,19 @@ textres SurfaceManager::Phase2(QList<rotationDef *> list, QList<wavefront *> inp
         cp->setSurface(wf);
         cp->resize(Width,.8 * Height);
         cp->replot();
-        astigSample sample(wf->name, wf->InputZerns[4], wf->InputZerns[5]);
+        // The aspect ratio is worked out from the canvas geometry, and the
+        // canvas only gets its real size once the layout has run.  Rendering
+        // straight after setSurface/resize could catch it stale, which drew
+        // the mirror as an oval on whichever plots happened to be rendered
+        // before the layout caught up.  replot() lays it out, then the aspect
+        // is applied to that geometry.
+        cp->updateAspectRatio();
+        cp->replot();
+        // wf carries the STAND wavefront in data, but its InputZerns were
+        // copied from the input and never recomputed, so the polar plot of
+        // "test stand astig at each rotation" was drawing the astig of the
+        // input instead.  The stand values are the ones worked out above.
+        astigSample sample(wf->name, standxastig.at<double>(i,0), standyastig.at<double>(i,0));
         samples << sample;
         QSize s = cp->size();
         contour.fill( QColor( Qt::white ).rgb() );
@@ -2407,12 +2421,16 @@ textres SurfaceManager::Phase2(QList<rotationDef *> list, QList<wavefront *> inp
     cp1->setSurface(wf2);
     cp1->resize(Width, .8 * Height);
     cp1->replot();
+    cp1->updateAspectRatio();
+    cp1->replot();
     QImage contour2(Width, Width, QImage::Format_ARGB32 );
     contour2.fill( QColor( Qt::white ).rgb() );
     QPainter painter2( &contour2 );
 
     renderer.setDiscardFlag(QwtPlotRenderer::DiscardLegend, false);
-    renderer.render( cp1, &painter2, QRect(0,0,Width,Height) );
+    // The rect has to have the same shape as the widget, otherwise the plot is
+    // laid out again into a different aspect and the mirror comes out oval.
+    renderer.render( cp1, &painter2, QRect(0,0,Width,.8 * Height) );
     QString imageName = "mydata://StandContourZerns.png";
     doc->addResource(QTextDocument::ImageResource,  QUrl(imageName), QVariant(contour2));
 
@@ -2492,13 +2510,42 @@ textres SurfaceManager::Phase2(QList<rotationDef *> list, QList<wavefront *> inp
 
     }
 
-    double maxv = std::max(fabs(mirrorYastig) +  fabs(mirrorAstigRadius),fabs(mirrorXastig ) + fabs(mirrorAstigRadius))  * 1.2;
-    maxv = std::max(maxX, maxv);
-    maxv = std::max(fabs(minX), maxv);
-    maxv = std::max(maxv, maxY);
-    maxv = std::max(fabs(minY), maxv);
-    pl1->setAxisScale(QwtPlot::xBottom, -maxv, maxv);
-    pl1->setAxisScale(QwtPlot::yLeft,   -maxv, maxv);
+    // Axis range is the bounding box of what is actually drawn - the stand
+    // crosses, the mirror dots and the green circle - and not a range forced
+    // to be symmetric about the origin.  The old range was built from the mean
+    // mirror point and the mean radius, so the fitted circle could fall
+    // outside it, and a stand astig well away from zero squeezed the whole
+    // picture into a corner.  Both axes keep the same span so that the circle
+    // is drawn as a circle.
+    double bxmin = 1e30, bxmax = -1e30, bymin = 1e30, bymax = -1e30;
+    for (int i = 0; i < list.size(); ++i){
+        bxmin = std::min(bxmin, standxastig.at<double>(i,0));
+        bxmax = std::max(bxmax, standxastig.at<double>(i,0));
+        bymin = std::min(bymin, standyastig.at<double>(i,0));
+        bymax = std::max(bymax, standyastig.at<double>(i,0));
+    }
+    for (int i = 0; i < mirrorAstigAtEachRotation.size(); ++i){
+        bxmin = std::min(bxmin, mirrorAstigAtEachRotation[i].x());
+        bxmax = std::max(bxmax, mirrorAstigAtEachRotation[i].x());
+        bymin = std::min(bymin, mirrorAstigAtEachRotation[i].y());
+        bymax = std::max(bymax, mirrorAstigAtEachRotation[i].y());
+    }
+    bxmin = std::min(bxmin, std::min(fittedcircle.a - fittedcircle.r, minX));
+    bxmax = std::max(bxmax, std::max(fittedcircle.a + fittedcircle.r, maxX));
+    bymin = std::min(bymin, std::min(fittedcircle.b - fittedcircle.r, minY));
+    bymax = std::max(bymax, std::max(fittedcircle.b + fittedcircle.r, maxY));
+    bxmin = std::min(bxmin, mirrorXastig - mirrorAstigRadius);
+    bxmax = std::max(bxmax, mirrorXastig + mirrorAstigRadius);
+    bymin = std::min(bymin, mirrorYastig - mirrorAstigRadius);
+    bymax = std::max(bymax, mirrorYastig + mirrorAstigRadius);
+
+    double cx = 0.5 * (bxmin + bxmax);
+    double cy = 0.5 * (bymin + bymax);
+    double half = 0.5 * std::max(bxmax - bxmin, bymax - bymin) * 1.15;
+    if (half < 1.e-6)
+        half = 0.05;
+    pl1->setAxisScale(QwtPlot::xBottom, cx - half, cx + half);
+    pl1->setAxisScale(QwtPlot::yLeft,   cy - half, cy + half);
     QColor color(Qt::green);
     QPen pen(color,3);
     curveAvgMirror->setPen(pen);
@@ -2733,6 +2780,8 @@ void SurfaceManager::computeStandAstig(define_input *wizPage, QList<rotationDef 
         plot->setSurface(wf);
         plot->resize(Width, .8 * Width);
         plot->replot();
+        plot->updateAspectRatio();
+        plot->replot();
         renderer.render( plot, &painter, QRect(0,0,Width,.8 * Width) );
 
         QString imageName = QString("mydata://%1.png").arg(list[i]->fname);
@@ -2756,6 +2805,8 @@ void SurfaceManager::computeStandAstig(define_input *wizPage, QList<rotationDef 
         loadComplete();
         plot->setSurface(wf);
         plot->resize(Width, .8 * Width);
+        plot->replot();
+        plot->updateAspectRatio();
         plot->replot();
 
         contour.fill( QColor( Qt::white ).rgb() );
@@ -2823,7 +2874,12 @@ void SurfaceManager::computeStandAstig(define_input *wizPage, QList<rotationDef 
     contour.fill( QColor( Qt::white ).rgb() );
     QPainter painter( &contour );
     plotAvg->resize(1.5 * Width, 1.5 * .8 * Width);
-    renderer.render( plotAvg, &painter, QRect(0,0,1.5 * Width, 1.5 *  Width) );
+    plotAvg->replot();
+    plotAvg->updateAspectRatio();
+    plotAvg->replot();
+    // Same rect shape as the widget - it used to be rendered into a square,
+    // which stretched the mirror by a quarter of its height.
+    renderer.render( plotAvg, &painter, QRect(0,0,1.5 * Width, 1.5 * .8 * Width) );
 
     QString imageName = "mydata://AvgAstigremoved.png";
     doc2->addResource(QTextDocument::ImageResource,  QUrl(imageName), QVariant(contour));
@@ -2886,15 +2942,80 @@ void SurfaceManager::computeStandAstig(define_input *wizPage, QList<rotationDef 
                      "<table border='1' cellspacing='2' cellpadding='2' width='70%'>"
                      "<tr><td><b>rotation</b></td><td><b>residual, waves</b></td>"
                      "<td><b>astig residual</b></td><td><b>used</b></td></tr>");
+        QString repeatThese;
         for (int i = 0; i < sfit.n && i < list.size(); ++i){
             bool dropped = sfit.outlier[i] && rotated.size() >= 5;
+            QString verdict = dropped ? "left out of the average"
+                                      : (sfit.suspect[i] ? "<b>measure again</b>" : "yes");
+            if (sfit.suspect[i])
+                repeatThese += QString("%1 deg (residual %2) ")
+                               .arg(list[i]->angle, 0, 'f', 1)
+                               .arg(sfit.residual[i], 0, 'f', 4);
             fhtml.append(QString("<tr><td>%1</td><td>%2</td><td>%3</td><td>%4</td></tr>")
                          .arg(list[i]->angle, 0, 'f', 1)
                          .arg(sfit.residual[i], 0, 'f', 4)
                          .arg(sfit.residualAstig[i], 0, 'f', 4)
-                         .arg(dropped ? "left out" : "yes"));
+                         .arg(verdict));
         }
         fhtml.append("</table>");
+        if (!repeatThese.isEmpty()){
+            fhtml.append(QString("<p><b>Worth measuring again: %1</b><br>"
+                                 "These rotations do not agree with the rest about what the stand was "
+                                 "doing. Either the mirror sat differently on the supports that time, "
+                                 "or the measurement itself was disturbed. Repeating them costs less "
+                                 "than adding rotations: the error of the result falls only as the "
+                                 "square root of their number, while one bad rotation moves it "
+                                 "outright.</p>").arg(repeatThese));
+        }
+        else if (sfit.n >= 3){
+            fhtml.append("<p>No rotation stands out - as far as this test can tell, the stand did "
+                         "the same thing every time.</p>");
+        }
+
+        // ---- what this set of angles can and cannot do ----------------
+        const StandFitOrder *oAst = 0, *oCom = 0, *oTre = 0, *oTet = 0;
+        for (size_t k = 0; k < sfit.orders.size(); ++k){
+            if (sfit.orders[k].cosNdx == 4)       oAst = &sfit.orders[k];
+            else if (sfit.orders[k].cosNdx == 6)  oCom = &sfit.orders[k];
+            else if (sfit.orders[k].cosNdx == 9)  oTre = &sfit.orders[k];
+            else if (sfit.orders[k].cosNdx == 16) oTet = &sfit.orders[k];
+        }
+        fhtml.append("<h3>What these rotations can and cannot separate</h3><ul>");
+        const char *nm4[4] = {"astigmatism", "coma", "trefoil", "tetrafoil"};
+        const StandFitOrder *ord4[4] = {oAst, oCom, oTre, oTet};
+        for (int j = 0; j < 4; ++j){
+            if (ord4[j] == 0)
+                continue;
+            if (!ord4[j]->separable)
+                fhtml.append(QString("<li><b>%1: cannot be separated at all</b> with these angles - "
+                                     "the stand and the mirror look identical to this term.</li>")
+                             .arg(QString(nm4[j])));
+            else if (ord4[j]->balance > 0.34)
+                fhtml.append(QString("<li>%1: only partly balanced (%2), so the stand part of it is "
+                                     "removed less accurately.</li>")
+                             .arg(QString(nm4[j])).arg(ord4[j]->balance, 0, 'f', 2));
+            else
+                fhtml.append(QString("<li>%1: balanced (%2).</li>")
+                             .arg(QString(nm4[j])).arg(ord4[j]->balance, 0, 'f', 2));
+        }
+        fhtml.append("</ul>");
+        if (sfit.n < 4){
+            fhtml.append("<p><b>Four rotations 90 deg apart is the smallest set worth using.</b> "
+                         "Two rotations have as many unknowns as measurements, so the residual is "
+                         "zero whatever the stand did; three give a residual but 0/120/240 makes "
+                         "trefoil inseparable. Four at 90 deg balance astigmatism, coma and trefoil "
+                         "together and still leave something to check against.</p>");
+        }
+        if (oAst != 0 && oAst->separable){
+            double seNow  = sfit.mirrorSE[4];
+            double seTwice = seNow / sqrt(2.0);
+            fhtml.append(QString("<p>The error of the mirror astigmatism falls as the square root of "
+                                 "the number of rotations: %1 rotations give +/- %2 waves, twice as "
+                                 "many would give about +/- %3. If that is not enough, the scatter "
+                                 "itself has to come down - a steadier stand, calmer air - because "
+                                 "four times the rotations only halve the error.</p>")
+                         .arg(sfit.n).arg(seNow, 0, 'f', 4).arg(seTwice, 0, 'f', 4));
+        }
         fhtml.append("<p>The residual is what is left of a rotation after the best common stand and "
                      "the mirror are taken out. It is the part of the stand that did NOT repeat, plus "
                      "measurement noise. Compare it with the mirror magnitudes above: if it is of the "

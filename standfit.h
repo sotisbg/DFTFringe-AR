@@ -73,7 +73,8 @@ struct StandFit {
     std::vector<double> mirrorSE;        // size nTerms, standard error of M
     std::vector<double> residual;        // per rotation, rms over primary astig/coma/trefoil
     std::vector<double> residualAstig;   // per rotation, astig only (m=2)
-    std::vector<bool>   outlier;         // per rotation
+    std::vector<bool>   outlier;         // per rotation, left out of the average
+    std::vector<bool>   suspect;         // per rotation, worth measuring again
 };
 
 // anglesDeg[i]  - rotation of the mirror for measurement i, degrees
