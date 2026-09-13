@@ -2114,6 +2114,29 @@ int getImageSize(QPrinter &printer){
 // on input list is the list of wavefront files and thier rotation angle.
 //     inputs are the actual wavefronts at original rotations.
 //     avgNdx is the index in the m_wavefronts list of the average with stand removed.
+// The aspect ratio of a ContourPlot is worked out from the geometry of its
+// canvas, and the canvas only takes its real size when the layout runs, which
+// happens inside replot().  On a widget that has never been shown one pass is
+// not always enough: the first replot lays it out, the aspect is then applied
+// to that geometry, and the second replot settles what came out of it.  Doing
+// this before every render is what keeps the mirror the same size, and round,
+// from the first image to the last - the first one used to come out smaller
+// than the rest because it was rendered before the layout had caught up.
+static void settleAspect(ContourPlot *p)
+{
+    if (p == 0)
+        return;
+    for (int k = 0; k < 3; ++k){
+        p->replot();
+        const int w = p->canvas()->width();
+        const int h = p->canvas()->height();
+        p->updateAspectRatio();
+        p->replot();
+        if (p->canvas()->width() == w && p->canvas()->height() == h)
+            break;
+    }
+}
+
 textres SurfaceManager::Phase2(QList<rotationDef *> list, QList<wavefront *> inputs, int avgNdx , int Width, QPrinter &printer){
     QTextEdit *editor = new QTextEdit;
 
@@ -2363,15 +2386,7 @@ textres SurfaceManager::Phase2(QList<rotationDef *> list, QList<wavefront *> inp
 
         cp->setSurface(wf);
         cp->resize(Width,.8 * Height);
-        cp->replot();
-        // The aspect ratio is worked out from the canvas geometry, and the
-        // canvas only gets its real size once the layout has run.  Rendering
-        // straight after setSurface/resize could catch it stale, which drew
-        // the mirror as an oval on whichever plots happened to be rendered
-        // before the layout caught up.  replot() lays it out, then the aspect
-        // is applied to that geometry.
-        cp->updateAspectRatio();
-        cp->replot();
+        settleAspect(cp);
         // wf carries the STAND wavefront in data, but its InputZerns were
         // copied from the input and never recomputed, so the polar plot of
         // "test stand astig at each rotation" was drawing the astig of the
@@ -2422,9 +2437,7 @@ textres SurfaceManager::Phase2(QList<rotationDef *> list, QList<wavefront *> inp
 
     cp1->setSurface(wf2);
     cp1->resize(Width, .8 * Height);
-    cp1->replot();
-    cp1->updateAspectRatio();
-    cp1->replot();
+    settleAspect(cp1);
     QImage contour2(Width, Width, QImage::Format_ARGB32 );
     contour2.fill( QColor( Qt::white ).rgb() );
     QPainter painter2( &contour2 );
@@ -2448,12 +2461,15 @@ textres SurfaceManager::Phase2(QList<rotationDef *> list, QList<wavefront *> inp
     m_ignoreInverse = false;
     m_standAvg = wf2;
     cp1->setSurface(wf2);
-    cp1->resize(Width,Height);
-    cp1->replot();
+    // Same size as the zernike based contour beside it: the two are printed
+    // next to each other and used to come out at different sizes, and the
+    // change of widget size behind the axis ranges left this one oval.
+    cp1->resize(Width, .8 * Height);
+    settleAspect(cp1);
 
     contour2.fill( QColor( Qt::white ).rgb() );
     cp1->m_suspendAspect = true;
-    renderer.render( cp1, &painter2, QRect(0,0,Width,Height) );
+    renderer.render( cp1, &painter2, QRect(0,0,Width,.8 * Height) );
     cp1->m_suspendAspect = false;
     cp1->m_zRangeMode = "Auto"; // restore contour plot to auto scaling.
     imageName = QString("mydata://StandContourMat.png");
@@ -2554,6 +2570,10 @@ textres SurfaceManager::Phase2(QList<rotationDef *> list, QList<wavefront *> inp
     // circle - the canvas is wider than it is tall once the legend and the
     // labels have taken their share, so the wider axis needs the wider span.
     double halfX = half, halfY = half;
+    // The widget has to be at its final size before its canvas is worth
+    // measuring - reading it earlier gave a ratio from a layout that had not
+    // happened yet, and the fitted circle came out an egg.
+    pl1->resize(1.5 * Width, 1.5 * Width);
     pl1->replot();
     QWidget *pl1canvas = pl1->canvas();
     if (pl1canvas != 0 && pl1canvas->width() > 20 && pl1canvas->height() > 20){
@@ -2809,8 +2829,7 @@ void SurfaceManager::computeStandAstig(define_input *wizPage, QList<rotationDef 
         plot->setSurface(wf);
         plot->resize(Width, .8 * Width);
         plot->replot();
-        plot->updateAspectRatio();
-        plot->replot();
+        settleAspect(plot);
         plot->m_suspendAspect = true;
         renderer.render( plot, &painter, QRect(0,0,Width,.8 * Width) );
         plot->m_suspendAspect = false;
@@ -2836,9 +2855,7 @@ void SurfaceManager::computeStandAstig(define_input *wizPage, QList<rotationDef 
         loadComplete();
         plot->setSurface(wf);
         plot->resize(Width, .8 * Width);
-        plot->replot();
-        plot->updateAspectRatio();
-        plot->replot();
+        settleAspect(plot);
 
         contour.fill( QColor( Qt::white ).rgb() );
         plot->m_suspendAspect = true;
@@ -2907,9 +2924,7 @@ void SurfaceManager::computeStandAstig(define_input *wizPage, QList<rotationDef 
     contour.fill( QColor( Qt::white ).rgb() );
     QPainter painter( &contour );
     plotAvg->resize(1.5 * Width, 1.5 * .8 * Width);
-    plotAvg->replot();
-    plotAvg->updateAspectRatio();
-    plotAvg->replot();
+    settleAspect(plotAvg);
     // Same rect shape as the widget - it used to be rendered into a square,
     // which stretched the mirror by a quarter of its height.
     plotAvg->m_suspendAspect = true;
