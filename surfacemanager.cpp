@@ -52,6 +52,7 @@
 #include <qwt_plot_histogram.h>
 #include "simulationsview.h"
 #include "standastigwizard.h"
+#include "standfit.h"
 #include "subtractwavefronatsdlg.h"
 #include <QTextDocument>
 #include <qwt_plot_marker.h>
@@ -2571,40 +2572,44 @@ textres SurfaceManager::Phase2(QList<rotationDef *> list, QList<wavefront *> inp
 
 
 void SurfaceManager::computeStandAstig(define_input *wizPage, QList<rotationDef *> list){
-    // check for pairs
-    QVector<rotationDef*> lookat = list.toVector();
-    spdlog::get("logger")->trace("computeStandAstig()");
-    while (lookat.size()){
-        for (int i = 0; i < lookat.size(); ++i){
-            double angle1 = wrapAngle(lookat[i]->angle);
-
-            double found = false;
-            for (int j = i+1; j < lookat.size(); ++j){
-                double angle2 = wrapAngle(lookat[j]->angle);
-
-                if (angle2 == wrapAngle(angle1 -90) || angle2 == wrapAngle(angle1 + 90))
-                {
-                    found = true;
-                    lookat.remove(j);
-                    lookat.remove(i);
-                    found = true;
-                    break;
-                }
+    // The old code demanded an exact 90 deg partner for every file and
+    // compared doubles with ==, so an entry of 89.5 deg failed outright while
+    // a perfectly usable set like 0/60/120 was rejected.  What decides whether
+    // the stand cancels is the balance of the whole angle set for the order in
+    // question: |sum exp(i*m*theta)| / N.  Zero is ideal, one means the set
+    // says nothing about that order.  The fit below does not depend on the
+    // cancellation any more, so a poor set is a warning, not an error.
+    if (list.size() < 2){
+        QMessageBox::warning(0, tr("Error"), tr("At least two rotations are needed."));
+        wizPage->runpb->setText("compute");
+        wizPage->runpb->setEnabled(true);
+        return;
+    }
+    {
+        const char *ordName[4] = {"", "coma", "astig", "trefoil"};
+        QString poor;
+        for (int m = 1; m <= 3; ++m){
+            double cr = 0., cim = 0.;
+            for (int i = 0; i < list.size(); ++i){
+                double phi = m * wrapAngle(list[i]->angle) * M_PI / 180.;
+                cr  += cos(phi);
+                cim += sin(phi);
             }
-
-            if (!found){
-                if (QMessageBox::Yes ==
-                  QMessageBox::question(0, tr("Error"),
-                                     QString("No 90 deg pair for %1 and angle %2").arg(
-                                                       lookat[i]->fname.toStdString().c_str()).arg(
-                                                       lookat[i]->angle, 6, 'f', 2))){
-                        wizPage->runpb->setText("compute");
-                        wizPage->runpb->setEnabled(true);
-                        return;
-                }
-            lookat.remove(i);
+            double bal = sqrt(cr * cr + cim * cim) / list.size();
+            if (bal > 0.34)
+                poor += QString("%1 (m=%2): %3   ").arg(QString(ordName[m])).arg(m).arg(bal, 0, 'f', 2);
+        }
+        if (!poor.isEmpty()){
+            if (QMessageBox::Yes != QMessageBox::question(0, tr("Unbalanced rotations"),
+                    tr("These orders are not balanced by the rotations you chose (0.00 would be ideal):\n\n%1\n\n"
+                       "A 0/90 deg pair balances astigmatism only - stand coma and trefoil stay in the result.\n"
+                       "Four rotations 90 deg apart balance all three.\n\n"
+                       "The least squares fit still removes what it can. Continue?").arg(poor),
+                    QMessageBox::Yes | QMessageBox::No)){
+                wizPage->runpb->setText("compute");
+                wizPage->runpb->setEnabled(true);
+                return;
             }
-            break;
         }
     }
     QApplication::setOverrideCursor(Qt::WaitCursor);
@@ -2655,20 +2660,76 @@ void SurfaceManager::computeStandAstig(define_input *wizPage, QList<rotationDef 
     editor->append("<tr>");
     int startingNdx = m_wavefronts.size() -1;
 
+    // ---------------------------------------------------------------------
+    // Pass 1.  Load every input first: the fit needs all rotations at once.
+    // ---------------------------------------------------------------------
+    QVector<int> inputNdx;
     for (int i = 0; i < list.size(); ++i){
-        contour.fill( QColor( Qt::white ).rgb() );
-        QPainter painter( &contour );
-        int ndx = m_wavefronts.size();
-
-        // get input file
-        QStringList loadList;
-        loadList << list[i]->fname;
         wizPage->m_log->append("Loading  " + list[i]->fname);
         QApplication::processEvents();
         loadWavefront(list[i]->fname);
-        wavefront * wf = m_wavefronts[m_currentNdx];
-        inputs.append(wf);
+        inputs.append(m_wavefronts[m_currentNdx]);
+        inputNdx.append(m_currentNdx);
         unrotatedNdxs.append(m_currentNdx);
+    }
+
+    // ---------------------------------------------------------------------
+    // Separate stand from mirror by least squares (see standfit.h).  Plain
+    // averaging of counter rotated wavefronts only removes the stand when the
+    // angle set happens to balance that azimuthal order; the fit removes it
+    // for every separable order and, more useful, tells how far each rotation
+    // is from the assumption that the stand repeats itself.
+    // ---------------------------------------------------------------------
+    wizPage->m_log->append("Fitting stand and mirror terms");
+    QApplication::processEvents();
+    std::vector<double> anglesDeg;
+    std::vector<std::vector<double> > zerns;
+    for (int i = 0; i < list.size(); ++i){
+        anglesDeg.push_back(wrapAngle(list[i]->angle));
+        zerns.push_back(inputs[i]->InputZerns);
+    }
+    StandFit sfit = fitStandZernikes(anglesDeg, zerns, Z_TERMS);
+
+    // Remove the fitted stand from each input before counter rotating.
+    QVector<int> correctedNdx;
+    if (sfit.valid){
+        QVector<int> zernsToUse;
+        for (size_t k = 0; k < sfit.orders.size(); ++k){
+            if (sfit.orders[k].separable)
+                zernsToUse << sfit.orders[k].cosNdx << sfit.orders[k].sinNdx;
+        }
+        cv::Mat standMat = computeWaveFrontFromZernikes(inputs[0]->data.cols,
+                                                        inputs[0]->data.rows,
+                                                        sfit.standZerns, zernsToUse);
+        wavefront *standWf = new wavefront(*inputs[0]);
+        standWf->data = standMat.clone();
+        standWf->workData = standWf->data;
+        standWf->mask = inputs[0]->mask.clone();
+        standWf->workMask = standWf->mask.clone();
+        standWf->name = QString("StandFit");
+        for (int i = 0; i < list.size(); ++i){
+            int ndx = m_wavefronts.size();
+            m_surface_finished = false;
+            subtract(inputs[i], standWf, false);
+            while(!m_surface_finished){qApp->processEvents();}
+            m_wavefronts[ndx]->name = QString("StandRemoved_%1").arg(list[i]->angle, 0, 'f', 1);
+            correctedNdx.append(ndx);
+        }
+        delete standWf;
+    }
+    else {
+        for (int i = 0; i < list.size(); ++i)
+            correctedNdx.append(inputNdx[i]);
+    }
+
+    // ---------------------------------------------------------------------
+    // Pass 2.  Counter rotate the stand corrected inputs and build page 1.
+    // ---------------------------------------------------------------------
+    for (int i = 0; i < list.size(); ++i){
+        contour.fill( QColor( Qt::white ).rgb() );
+        QPainter painter( &contour );
+
+        wavefront * wf = inputs[i];
         plot->setSurface(wf);
         plot->resize(Width, .8 * Width);
         plot->replot();
@@ -2680,13 +2741,13 @@ void SurfaceManager::computeStandAstig(define_input *wizPage, QList<rotationDef 
         doc1Res.append(imageName);
         html.append("<tr><td><p align='center'> <img src='" +imageName + "' /><br><b>" + angle + "</b></p></td>");
 
-        // counter rotate it
+        // counter rotate the stand corrected copy
 
         wizPage->m_log->setText(QString("Counter Rotating ") + list[i]->fname.right(list[i]->fname.size() - list[i]->fname.lastIndexOf("/")-1));
         QApplication::processEvents();
         QList<int> l;
-        l.append(ndx);
-        ndx = m_wavefronts.size();
+        l.append(correctedNdx[i]);
+        int ndx = m_wavefronts.size();
 
         rotateThese(wrapAngle(list[i]->angle),l);
         rotated.append(m_wavefronts[ndx]);
@@ -2717,10 +2778,28 @@ void SurfaceManager::computeStandAstig(define_input *wizPage, QList<rotationDef 
     QApplication::processEvents();
     // Now average all the rotated ones.
     QList<wavefront *> wlist;
+    QString droppedRotations;
     for (int i = 0; i < rotated.size(); ++i){
+        // A rotation whose residual stands out from the rest did not see the
+        // same stand as the others.  Averaging it in spreads its error over
+        // the result with full weight 1/N, so it is left out - but only when
+        // enough rotations remain for the fit to still mean something.
+        if (sfit.valid && i < (int)sfit.outlier.size() && sfit.outlier[i]
+                && rotated.size() >= 5){
+            droppedRotations += QString("%1 ").arg(list[i]->angle, 0, 'f', 1);
+            wizPage->m_log->append(QString("Rotation %1 left out of the average: residual %2 waves")
+                                   .arg(list[i]->angle, 0, 'f', 1)
+                                   .arg(sfit.residual[i], 0, 'f', 4));
+            continue;
+        }
         wlist << rotated[i];
     }
-
+    if (wlist.size() < 2){
+        wlist.clear();
+        droppedRotations.clear();
+        for (int i = 0; i < rotated.size(); ++i)
+            wlist << rotated[i];
+    }
 
     average(wlist);
 
@@ -2765,8 +2844,80 @@ void SurfaceManager::computeStandAstig(define_input *wizPage, QList<rotationDef 
     wizPage->m_log->setText("computing stand astigs");
     QApplication::processEvents();
     textres page3res = Phase2(list, inputs, avgNdx, Width, printer);
+    // ---- report of the least squares separation -------------------------
+    QTextEdit *pageFit = new QTextEdit;
+    pageFit->resize(600,800);
+    QString fhtml = "<html><head/><body><h1>Test Stand Astig Removal</h1>"
+                    "<h3>Step 0. Least squares separation of stand and mirror</h3>";
+    if (!sfit.valid){
+        fhtml.append("<p>Not enough usable rotations for the fit - the plain average was used.</p>");
+    }
+    else {
+        fhtml.append(QString("<p>%1 rotations. Scatter of a single measurement about the model: "
+                             "<b>%2 waves</b> rms.</p>").arg(sfit.n).arg(sfit.sigma, 0, 'f', 4));
+        fhtml.append("<table border='1' cellspacing='2' cellpadding='2' width='90%'>"
+                     "<tr><td><b>term</b></td><td><b>stand</b></td><td><b>mirror</b></td>"
+                     "<td><b>+/-</b></td><td><b>balance</b></td></tr>");
+        for (size_t k = 0; k < sfit.orders.size(); ++k){
+            const StandFitOrder &o = sfit.orders[k];
+            QString nm = QString(zernsNames[o.cosNdx]);
+            if (nm.startsWith("X "))
+                nm = nm.mid(2);
+            if (!o.separable){
+                fhtml.append(QString("<tr><td>%1</td><td colspan='4'>not separable with these "
+                                     "rotations (balance %2)</td></tr>")
+                             .arg(nm).arg(o.balance, 0, 'f', 2));
+                continue;
+            }
+            double sm = sqrt(o.standX * o.standX + o.standY * o.standY);
+            double mm = sqrt(o.mirrorX * o.mirrorX + o.mirrorY * o.mirrorY);
+            fhtml.append(QString("<tr><td>%1</td><td>%2</td><td>%3</td><td>%4</td><td>%5</td></tr>")
+                         .arg(nm).arg(sm, 0, 'f', 4).arg(mm, 0, 'f', 4)
+                         .arg(sfit.mirrorSE[o.cosNdx], 0, 'f', 4).arg(o.balance, 0, 'f', 2));
+        }
+        fhtml.append("</table>");
+        fhtml.append("<p>Magnitudes are in waves on the wavefront. <b>+/-</b> is the standard error of "
+                     "the mirror term: a value that is not at least twice its own error has not been "
+                     "measured, it has been guessed at. <b>balance</b> is how much of that order the "
+                     "rotations leave undetermined - 0.00 is ideal, 1.00 means the set cannot tell "
+                     "stand from mirror at all.</p>");
+
+        fhtml.append("<h3>How well did the stand repeat itself?</h3>"
+                     "<table border='1' cellspacing='2' cellpadding='2' width='70%'>"
+                     "<tr><td><b>rotation</b></td><td><b>residual, waves</b></td>"
+                     "<td><b>astig residual</b></td><td><b>used</b></td></tr>");
+        for (int i = 0; i < sfit.n && i < list.size(); ++i){
+            bool dropped = sfit.outlier[i] && rotated.size() >= 5;
+            fhtml.append(QString("<tr><td>%1</td><td>%2</td><td>%3</td><td>%4</td></tr>")
+                         .arg(list[i]->angle, 0, 'f', 1)
+                         .arg(sfit.residual[i], 0, 'f', 4)
+                         .arg(sfit.residualAstig[i], 0, 'f', 4)
+                         .arg(dropped ? "left out" : "yes"));
+        }
+        fhtml.append("</table>");
+        fhtml.append("<p>The residual is what is left of a rotation after the best common stand and "
+                     "the mirror are taken out. It is the part of the stand that did NOT repeat, plus "
+                     "measurement noise. Compare it with the mirror magnitudes above: if it is of the "
+                     "same size, the stand moved as much as the thing you are trying to measure.</p>");
+        if (sfit.n < 3){
+            fhtml.append("<p><b>Two rotations cannot tell you anything about repeatability.</b> "
+                         "The fit has as many unknowns as measurements, so the residual is zero by "
+                         "construction. Use three or more rotations - four, 90 deg apart, is the "
+                         "smallest set that also balances coma and trefoil.</p>");
+        }
+        if (!droppedRotations.isEmpty())
+            fhtml.append(QString("<p>Rotations left out of the average: <b>%1</b></p>").arg(droppedRotations));
+        fhtml.append("<p><b>What rotation can never remove:</b> terms with no azimuthal variation - "
+                     "defocus and spherical aberration. A stand that bends the mirror symmetrically "
+                     "looks exactly like figure and stays in the result no matter how many rotations "
+                     "are averaged.</p>");
+    }
+    fhtml.append("</body></html>");
+    pageFit->setHtml(fhtml);
+
     QTabWidget *tabw = new QTabWidget();
     tabw->setTabShape(QTabWidget::Triangular);
+    tabw->addTab(pageFit, "Stand fit");
     tabw->addTab(editor, "Page 1 input analysis");
     tabw->addTab(page2, "Page 2 Stand removed.");
     tabw->addTab(page3res.Edit, "Page 3 stand analysis");
@@ -2796,9 +2947,11 @@ void SurfaceManager::computeStandAstig(define_input *wizPage, QList<rotationDef 
 
      printer.setOutputFileName(AstigReportPdfName);
      QTextCursor cursor(&pdfDoc);
-     cursor.insertHtml(editor->toHtml());
      QTextBlockFormat blockFormat;
      blockFormat.setPageBreakPolicy(QTextFormat::PageBreak_AlwaysBefore);
+     cursor.insertHtml(pageFit->toHtml());
+     cursor.insertBlock(blockFormat);
+     cursor.insertHtml(editor->toHtml());
      cursor.insertBlock(blockFormat);
      cursor.insertHtml(page2->toHtml());
      cursor.insertBlock(blockFormat);

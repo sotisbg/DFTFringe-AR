@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Installer>
-    <Name>DFTFringe</Name>
+    <Name>DFTFringe-astig</Name>
     <Version>MY_AUTOMATED_VERSION_STRING</Version>
-    <Title>DFTFringe Installer</Title>
+    <Title>DFTFringe-astig Installer</Title>
     <Publisher>githubdoe</Publisher>
-    <StartMenuDir>DFTFringe</StartMenuDir>
-    <TargetDir>@HomeDir@/DFTFringe</TargetDir>
+    <StartMenuDir>DFTFringe-astig</StartMenuDir>
+    <TargetDir>@HomeDir@/DFTFringe-astig</TargetDir>
 </Installer>
