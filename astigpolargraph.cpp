@@ -1,4 +1,5 @@
 #include "astigpolargraph.h"
+#include <cmath>
 #include "ui_astigpolargraph.h"
 #include "surfacemanager.h"
 #include <QtCharts/QLegendMarker>
@@ -29,7 +30,10 @@ astigPolargraph::astigPolargraph(    QList<astigSample>list, QWidget *parent) :
     radialAxis->setTickCount(5);
     radialAxis->setLabelFormat("%.1f");
     chart->addAxis(radialAxis, QPolarChart::PolarOrientationRadial);
-    double maxAstig = 1.;
+    // Started at 1 wave and only ever grew, while astigmatism is measured in
+    // hundredths of a wave - so every point landed in the middle of the plot
+    // and the whole thing said nothing.  Scale to the data instead.
+    double maxAstig = 0.;
 
     QScreen *screen = QGuiApplication::primaryScreen();
     qreal screenDPI = screen->physicalDotsPerInchX();
@@ -92,7 +96,14 @@ astigPolargraph::astigPolargraph(    QList<astigSample>list, QWidget *parent) :
         chart->legend()->setAlignment(Qt::AlignRight);
     else chart->legend()->setAlignment(Qt::AlignBottom);
 
-    maxAstig = ceil(maxAstig);
+    // Round up to something readable rather than to whole waves: 0.107 waves
+    // of astig has to become 0.12, not 1.
+    maxAstig *= 1.10;
+    if (maxAstig < 1.e-6)
+        maxAstig = 0.05;
+    double step = pow(10., floor(log10(maxAstig)) - 1.);
+    maxAstig = ceil(maxAstig / step) * step;
+    radialAxis->setLabelFormat(maxAstig < 1. ? "%.3f" : "%.1f");
     radialAxis->setRange(0, maxAstig);
     angularAxis->setRange(0, 360);
     ui->waveFrontTable->resizeColumnsToContents();

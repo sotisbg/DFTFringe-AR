@@ -575,7 +575,7 @@ QString ContourPlot::m_zRangeMode("Auto");
 double ContourPlot::m_zOffset = 0.;
 
 ContourPlot::ContourPlot( QWidget *parent, ContourTools *tools, bool minimal ):
-    QwtPlot( parent ),m_wf(0),m_tools(tools),m_minimal(minimal), m_linkProfile(true), m_inZoomOperation(false), m_contourPen(Qt::white)
+    QwtPlot( parent ),m_wf(0),m_tools(tools),m_minimal(minimal), m_linkProfile(true), m_inZoomOperation(false), m_suspendAspect(false), m_contourPen(Qt::white)
 {
     spdlog::get("logger")->trace("ContourPlot::ContourPlot");
     d_spectrogram = new QwtPlotSpectrogram();
@@ -744,7 +744,12 @@ void ContourPlot::updateAspectRatio()
     int canvas_w = c->width();
     int canvas_h = c->height();
 
-    if (canvas_w <= 0 || canvas_h <= 0){
+    // A canvas this small or this lopsided is one that has not been laid out
+    // yet.  Stretching the axes to match it produced ranges like -2000..4000
+    // over 640 pixels of data, which is how a round mirror ended up as a flat
+    // streak across the plot.
+    const double ratio = (canvas_h > 0) ? (double)canvas_w / canvas_h : 0.;
+    if (canvas_w < 20 || canvas_h < 20 || ratio < 0.05 || ratio > 20.){
         isReentering = false;
         return;
     }
@@ -766,7 +771,7 @@ bool ContourPlot::eventFilter(QObject *obj, QEvent *event)
 {
     if (obj == canvas() && event->type() == QEvent::Resize)
     {
-        if (!m_inZoomOperation) {
+        if (!m_inZoomOperation && !m_suspendAspect) {
             updateAspectRatio();
         }
         return false;
