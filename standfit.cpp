@@ -67,6 +67,7 @@ StandFit fitStandZernikes(const std::vector<double> &anglesDeg,
     fit.residual.assign(N > 0 ? N : 0, 0.);
     fit.residualAstig.assign(N > 0 ? N : 0, 0.);
     fit.outlier.assign(N > 0 ? N : 0, false);
+    fit.suspect.assign(N > 0 ? N : 0, false);
 
     if (N < 2 || static_cast<int>(zerns.size()) != N)
         return fit;                      // one rotation says nothing
@@ -195,22 +196,31 @@ StandFit fitStandZernikes(const std::vector<double> &anglesDeg,
         fit.mirrorSE[o.sinNdx] = se;
     }
 
-    // Outliers.  With four rotations the fit still has something to say; with
-    // fewer, dropping one would leave it underdetermined, so nothing is
-    // flagged.  Robust z score on the per rotation residual (MAD based) keeps
-    // one bad rotation from setting the scale it is judged against.
-    if (N >= 5) {
+    // Two levels, because they answer different questions.
+    //
+    // suspect - this rotation does not sit with the others and is worth
+    //           measuring again.  Needs three rotations, the point at which
+    //           there is a residual at all.
+    // outlier - so far out that it is left out of the average as well.  That
+    //           needs five, otherwise dropping one leaves too little behind.
+    //
+    // Both use a robust z score (median and MAD) so that one bad rotation
+    // cannot set the scale it is then judged against.
+    if (N >= 3) {
         const double med = median(fit.residual);
         std::vector<double> dev(N);
         for (int i = 0; i < N; ++i)
             dev[i] = fabs(fit.residual[i] - med);
         const double mad = median(dev);
-        if (mad > 1e-9) {
-            for (int i = 0; i < N; ++i) {
-                const double z = 0.6745 * (fit.residual[i] - med) / mad;
-                if (z > 3.5)
-                    fit.outlier[i] = true;
-            }
+        for (int i = 0; i < N; ++i) {
+            const double z = (mad > 1e-9) ? 0.6745 * (fit.residual[i] - med) / mad : 0.;
+            // The ratio test catches the case of a very tight MAD, the z score
+            // the case of a wide spread with one entry beyond it.
+            const bool far = (z > 2.5) || (med > 1e-9 && fit.residual[i] > 2.0 * med);
+            if (far)
+                fit.suspect[i] = true;
+            if (N >= 5 && z > 3.5)
+                fit.outlier[i] = true;
         }
     }
 
