@@ -64,6 +64,12 @@ public:
     int m_radialDeg;
     bool m_do_fill;
     bool m_inZoomOperation;
+    // While QwtPlotRenderer is drawing the plot into an image it resizes
+    // the canvas itself, which fires the resize handler below and rewrites
+    // the axis ranges from a half finished geometry.  That is what drew the
+    // mirror as an oval - or as a flat streak with the y axis running to
+    // thousands.  Rendering sets this and the handler keeps its hands off.
+    bool m_suspendAspect;
 
 
 signals:

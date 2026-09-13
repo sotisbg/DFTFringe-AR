@@ -2380,7 +2380,9 @@ textres SurfaceManager::Phase2(QList<rotationDef *> list, QList<wavefront *> inp
         samples << sample;
         QSize s = cp->size();
         contour.fill( QColor( Qt::white ).rgb() );
+        cp->m_suspendAspect = true;
         renderer.render( cp, &painter, QRect(0,0,s.width(),s.height() ));
+        cp->m_suspendAspect = false;
 
         QString imageName = QString("mydata://zern%1.png").arg(wf->name);
         imageName.replace("-","CCW");
@@ -2430,7 +2432,9 @@ textres SurfaceManager::Phase2(QList<rotationDef *> list, QList<wavefront *> inp
     renderer.setDiscardFlag(QwtPlotRenderer::DiscardLegend, false);
     // The rect has to have the same shape as the widget, otherwise the plot is
     // laid out again into a different aspect and the mirror comes out oval.
+    cp1->m_suspendAspect = true;
     renderer.render( cp1, &painter2, QRect(0,0,Width,.8 * Height) );
+    cp1->m_suspendAspect = false;
     QString imageName = "mydata://StandContourZerns.png";
     doc->addResource(QTextDocument::ImageResource,  QUrl(imageName), QVariant(contour2));
 
@@ -2448,7 +2452,9 @@ textres SurfaceManager::Phase2(QList<rotationDef *> list, QList<wavefront *> inp
     cp1->replot();
 
     contour2.fill( QColor( Qt::white ).rgb() );
+    cp1->m_suspendAspect = true;
     renderer.render( cp1, &painter2, QRect(0,0,Width,Height) );
+    cp1->m_suspendAspect = false;
     cp1->m_zRangeMode = "Auto"; // restore contour plot to auto scaling.
     imageName = QString("mydata://StandContourMat.png");
     doc->addResource(QTextDocument::ImageResource,  QUrl(imageName), QVariant(contour2));
@@ -2544,8 +2550,21 @@ textres SurfaceManager::Phase2(QList<rotationDef *> list, QList<wavefront *> inp
     double half = 0.5 * std::max(bxmax - bxmin, bymax - bymin) * 1.15;
     if (half < 1.e-6)
         half = 0.05;
-    pl1->setAxisScale(QwtPlot::xBottom, cx - half, cx + half);
-    pl1->setAxisScale(QwtPlot::yLeft,   cy - half, cy + half);
+    // Equal spans alone are not enough for the fitted circle to be drawn as a
+    // circle - the canvas is wider than it is tall once the legend and the
+    // labels have taken their share, so the wider axis needs the wider span.
+    double halfX = half, halfY = half;
+    pl1->replot();
+    QWidget *pl1canvas = pl1->canvas();
+    if (pl1canvas != 0 && pl1canvas->width() > 20 && pl1canvas->height() > 20){
+        double ar = (double)pl1canvas->width() / pl1canvas->height();
+        if (ar > 1.)
+            halfX = half * ar;
+        else if (ar > 0.05)
+            halfY = half / ar;
+    }
+    pl1->setAxisScale(QwtPlot::xBottom, cx - halfX, cx + halfX);
+    pl1->setAxisScale(QwtPlot::yLeft,   cy - halfY, cy + halfY);
     QColor color(Qt::green);
     QPen pen(color,3);
     curveAvgMirror->setPen(pen);
@@ -2748,21 +2767,31 @@ void SurfaceManager::computeStandAstig(define_input *wizPage, QList<rotationDef 
         cv::Mat standMat = computeWaveFrontFromZernikes(inputs[0]->data.cols,
                                                         inputs[0]->data.rows,
                                                         sfit.standZerns, zernsToUse);
-        wavefront *standWf = new wavefront(*inputs[0]);
-        standWf->data = standMat.clone();
-        standWf->workData = standWf->data;
-        standWf->mask = inputs[0]->mask.clone();
-        standWf->workMask = standWf->mask.clone();
-        standWf->name = QString("StandFit");
+        // Subtracting through subtract() would be wrong here: it marks the
+        // result as already nulled (useSANull = false) because it assumes both
+        // operands carry the mirror's null term and that it cancels.  The stand
+        // map is a plain Zernike surface with no null in it, so the paraboloid
+        // survived the subtraction and the "stand removed" wavefront came out
+        // as 1.5 waves of bullseye.  Copy the input instead and take the map
+        // off its data, so every flag - useSANull included - stays as it was.
         for (int i = 0; i < list.size(); ++i){
-            int ndx = m_wavefronts.size();
+            cv::Mat sm = standMat;
+            if (sm.rows != inputs[i]->data.rows || sm.cols != inputs[i]->data.cols)
+                cv::resize(standMat, sm, cv::Size(inputs[i]->data.cols, inputs[i]->data.rows));
+            wavefront *corr = new wavefront(*inputs[i]);
+            corr->data = inputs[i]->data - sm;
+            corr->workData = corr->data;
+            corr->name = QString("StandRemoved_%1").arg(list[i]->angle, 0, 'f', 1);
+            corr->dirtyZerns = true;
+            corr->wasSmoothed = false;
+            m_wavefronts << corr;
+            m_currentNdx = m_wavefronts.size() - 1;
+            m_surfaceTools->addWaveFront(corr->name);
+            correctedNdx.append(m_currentNdx);
             m_surface_finished = false;
-            subtract(inputs[i], standWf, false);
+            generateSurfacefromWavefront(m_currentNdx);
             while(!m_surface_finished){qApp->processEvents();}
-            m_wavefronts[ndx]->name = QString("StandRemoved_%1").arg(list[i]->angle, 0, 'f', 1);
-            correctedNdx.append(ndx);
         }
-        delete standWf;
     }
     else {
         for (int i = 0; i < list.size(); ++i)
@@ -2782,7 +2811,9 @@ void SurfaceManager::computeStandAstig(define_input *wizPage, QList<rotationDef 
         plot->replot();
         plot->updateAspectRatio();
         plot->replot();
+        plot->m_suspendAspect = true;
         renderer.render( plot, &painter, QRect(0,0,Width,.8 * Width) );
+        plot->m_suspendAspect = false;
 
         QString imageName = QString("mydata://%1.png").arg(list[i]->fname);
         QString angle = QString("%1 Deg").arg(-list[i]->angle, 6, 'f', 2);
@@ -2810,7 +2841,9 @@ void SurfaceManager::computeStandAstig(define_input *wizPage, QList<rotationDef 
         plot->replot();
 
         contour.fill( QColor( Qt::white ).rgb() );
+        plot->m_suspendAspect = true;
         renderer.render( plot, &painter, QRect(0,0,Width, .8 * Width) );
+        plot->m_suspendAspect = false;
         angle = QString("%1 Deg").arg(-list[i]->angle, 6, 'f', 2);
         imageName = QString("mydata://CR%1%2.png").arg(list[i]->fname).arg(angle); // clazy:exclude=qstring-arg
 
@@ -2879,7 +2912,9 @@ void SurfaceManager::computeStandAstig(define_input *wizPage, QList<rotationDef 
     plotAvg->replot();
     // Same rect shape as the widget - it used to be rendered into a square,
     // which stretched the mirror by a quarter of its height.
+    plotAvg->m_suspendAspect = true;
     renderer.render( plotAvg, &painter, QRect(0,0,1.5 * Width, 1.5 * .8 * Width) );
+    plotAvg->m_suspendAspect = false;
 
     QString imageName = "mydata://AvgAstigremoved.png";
     doc2->addResource(QTextDocument::ImageResource,  QUrl(imageName), QVariant(contour));
