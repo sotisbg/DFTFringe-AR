@@ -3056,15 +3056,118 @@ void SurfaceManager::computeStandAstig(define_input *wizPage, QList<rotationDef 
                          "trefoil inseparable. Four at 90 deg balance astigmatism, coma and trefoil "
                          "together and still leave something to check against.</p>");
         }
-        if (oAst != 0 && oAst->separable){
-            double seNow  = sfit.mirrorSE[4];
-            double seTwice = seNow / sqrt(2.0);
-            fhtml.append(QString("<p>The error of the mirror astigmatism falls as the square root of "
-                                 "the number of rotations: %1 rotations give +/- %2 waves, twice as "
-                                 "many would give about +/- %3. If that is not enough, the scatter "
-                                 "itself has to come down - a steadier stand, calmer air - because "
-                                 "four times the rotations only halve the error.</p>")
-                         .arg(sfit.n).arg(seNow, 0, 'f', 4).arg(seTwice, 0, 'f', 4));
+        // ---- analysis, conclusions, what to do next --------------------
+        {
+            std::vector<double> rs(sfit.residual);
+            std::sort(rs.begin(), rs.end());
+            const double medRes = rs.empty() ? 0.
+                    : ((rs.size() % 2) ? rs[rs.size()/2]
+                                       : 0.5 * (rs[rs.size()/2 - 1] + rs[rs.size()/2]));
+
+            fhtml.append("<h3>What this measurement is worth</h3><ol>");
+
+            if (oAst != 0 && oAst->separable){
+                const double magAst   = sqrt(oAst->mirrorX * oAst->mirrorX + oAst->mirrorY * oAst->mirrorY);
+                const double seAst    = sfit.mirrorSE[4];
+                const double standAst = sqrt(oAst->standX * oAst->standX + oAst->standY * oAst->standY);
+
+                if (magAst > 2.0 * seAst){
+                    fhtml.append(QString("<li>Mirror astigmatism <b>%1 +/- %2 waves</b>. It is more "
+                                         "than twice its own uncertainty, so it is a measurement and "
+                                         "not a guess.</li>")
+                                 .arg(magAst, 0, 'f', 4).arg(seAst, 0, 'f', 4));
+                }
+                else {
+                    fhtml.append(QString("<li>Mirror astigmatism <b>%1 +/- %2 waves</b> - it does not "
+                                         "reach twice its own uncertainty. <b>As far as this test can "
+                                         "tell, the mirror astigmatism is not distinguishable from "
+                                         "zero.</b> Do not chase it on the machine.</li>")
+                                 .arg(magAst, 0, 'f', 4).arg(seAst, 0, 'f', 4));
+                }
+
+                if (standAst > 1.e-6 && magAst > 1.e-9){
+                    fhtml.append(QString("<li>The stand puts in <b>%1 waves</b> of astigmatism, %2 "
+                                         "times what is left for the mirror. While it is the larger "
+                                         "of the two, the answer is set by how well the stand repeats "
+                                         "itself - not by the interferometer.</li>")
+                                 .arg(standAst, 0, 'f', 4).arg(standAst / magAst, 0, 'f', 1));
+                }
+
+                if (medRes > 1.e-9){
+                    QString cmp = (medRes > 1.5 * magAst) ? "larger than"
+                                : ((medRes > 0.67 * magAst) ? "about the same size as" : "smaller than");
+                    fhtml.append(QString("<li>The part of the stand that did <b>not</b> repeat is %1 "
+                                         "waves rms, %2 the mirror term itself.%3</li>")
+                                 .arg(medRes, 0, 'f', 4).arg(cmp)
+                                 .arg(medRes > magAst
+                                      ? QString(" That is the whole difficulty: the support moves "
+                                                "more between rotations than the figure being "
+                                                "looked for.")
+                                      : QString()));
+                }
+            }
+            fhtml.append("</ol>");
+
+            fhtml.append("<h3>How to make it better</h3><ul>");
+
+            if (!repeatThese.isEmpty())
+                fhtml.append(QString("<li><b>Measure again at %1</b> before anything else. One "
+                                     "rotation out of step moves the answer outright, and it costs "
+                                     "one measurement to put right.</li>").arg(repeatThese));
+
+            if (oAst != 0 && oAst->separable){
+                const double magAst = sqrt(oAst->mirrorX * oAst->mirrorX + oAst->mirrorY * oAst->mirrorY);
+                const double seAst  = sfit.mirrorSE[4];
+                if (magAst > 1.e-9 && seAst > 1.e-9){
+                    const double ratio = 2.0 * seAst / magAst;      // how far from 2 sigma
+                    const int nNeed = (int)ceil(sfit.n * ratio * ratio);
+                    if (magAst > 2.0 * seAst){
+                        fhtml.append(QString("<li>The astigmatism is already clear of its own noise. "
+                                             "More rotations would only sharpen it: four times as many "
+                                             "halve the error.</li>"));
+                    }
+                    else if (nNeed <= 24){
+                        fhtml.append(QString("<li>To lift this astigmatism clear of its own noise you "
+                                             "would need about <b>%1 rotations in total</b> instead of "
+                                             "%2 - the error falls only as the square root of their "
+                                             "number.</li>").arg(nNeed).arg(sfit.n));
+                    }
+                    else {
+                        fhtml.append(QString("<li>Adding rotations will not settle this: it would take "
+                                             "roughly <b>%1</b> of them to lift the astigmatism clear "
+                                             "of its own noise. The scatter itself has to come down "
+                                             "instead - a steadier support, calmer air, a longer "
+                                             "settling time.</li>").arg(nNeed));
+                    }
+                }
+            }
+
+            fhtml.append("<li><b>Is it the air or is it the seating?</b> The residual above mixes the "
+                         "two and cannot tell them apart on its own. Measure one angle twice without "
+                         "touching the mirror - that difference is measurement noise. Then measure it "
+                         "twice more, lifting the mirror and setting it back between them - that "
+                         "difference is the seating. Feed them to this wizard as two entries at the "
+                         "same angle; it takes repeated angles. If the scatter between rotations is "
+                         "no worse than the untouched pair, the air is the limit and more rotations "
+                         "help. If it matches the re-seated pair instead, the support is the limit "
+                         "and more rotations will not help.</li>");
+
+            fhtml.append("<li><b>What this test cannot see at all.</b> Anything that repeats exactly "
+                         "at every rotation is invisible to it, however small the residual: terms with "
+                         "no azimuthal variation (defocus, spherical), any order the angle set cannot "
+                         "separate, errors of the interferometer itself, and - the one worth "
+                         "remembering - a support that turns with the mirror. The whole method rests "
+                         "on the stand being fixed in the room while the mirror turns in it. If the "
+                         "same points of the glass sit on the same pads every time, that deformation "
+                         "is locked to the mirror and is handed to it as figure.</li>");
+
+            fhtml.append("<li><b>The check that is worth more than any of the above:</b> run the "
+                         "series again on a different stand, or with a different number of supports. "
+                         "If the mirror astigmatism survives that, it is in the glass. If it changes, "
+                         "it was the support all along - repeatable, and therefore invisible to every "
+                         "number on this page.</li>");
+
+            fhtml.append("</ul>");
         }
         fhtml.append("<p>The residual is what is left of a rotation after the best common stand and "
                      "the mirror are taken out. It is the part of the stand that did NOT repeat, plus "
