@@ -2126,12 +2126,23 @@ static void settleAspect(ContourPlot *p)
 {
     if (p == 0)
         return;
-    for (int k = 0; k < 3; ++k){
+    // resize() on a widget that has never been shown does not lay it out on the
+    // spot - it posts the resize event and the layout follows when that event is
+    // delivered.  Until then the plot still believes it has its old geometry, so
+    // the aspect ratio gets applied to the wrong shape.  That is why the FIRST
+    // plot of every group came out at a different scale and oval while all the
+    // later ones were right: by the time they were drawn, a processEvents() from
+    // somewhere in the loop had delivered the event.  Deliver it here instead of
+    // leaving it to chance.
+    QApplication::processEvents();
+    for (int k = 0; k < 4; ++k){
         p->replot();
+        QApplication::processEvents();
         const int w = p->canvas()->width();
         const int h = p->canvas()->height();
         p->updateAspectRatio();
         p->replot();
+        QApplication::processEvents();
         if (p->canvas()->width() == w && p->canvas()->height() == h)
             break;
     }
