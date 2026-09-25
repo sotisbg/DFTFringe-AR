@@ -29,6 +29,8 @@
 #include <QMessageBox>
 #include <QTextStream>
 #include <QHash>
+#include <QLocale>
+#include <QPageSize>
 #include <qwt_plot.h>
 #include <qwt_plot_curve.h>
 #include <qwt_plot_grid.h>
@@ -2710,8 +2712,8 @@ void SurfaceManager::computeStandAstig(define_input *wizPage, QList<rotationDef 
 
     QString html = ("<html><head/><body><h1><center>Test Stand Astig Removal</center></h1>"
                     "<h2><center>" + AstigReportTitle);
-           html.append("    <font color='grey'>" + QDate::currentDate().toString() +
-                       " " +QTime::currentTime().toString()+"</font></center><h2>");
+           html.append("    <font color='grey'>" + QLocale(QLocale::English).toString(QDate::currentDate(), "dd MMM yyyy") +
+                       " " +QTime::currentTime().toString("HH:mm:ss")+"</font></center><h2>");
            html.append("<h3>Step 1. Counter rotate input files results:</h3>"
                        "Check that all the counter rotated images appear to be oriented the same way."
                        "If the stand astig is equal to or larger than the mirror astig they may not appear to be oriented the same way."
@@ -3387,7 +3389,11 @@ void SurfaceManager::report(){
     if (!dlg.exec())
         return;
 
-    int finalWidth =  QGuiApplication::primaryScreen()->geometry().width()/2.5;
+    // Size report images off the PDF page itself, not the screen that happens to be
+    // generating it - the old screen-width-based figure meant the same report came
+    // out with differently sized images depending on which monitor/machine ran it.
+    double pageWidthPt = printer.pageLayout().pageSize().size(QPageSize::Point).width();
+    int finalWidth = qRound(pageWidthPt * 96.0 / 72.0);
 
     printer.setFullPage( true );
 
@@ -3408,8 +3414,8 @@ void SurfaceManager::report(){
     metricsDisplay *metrics = metricsDisplay::get_instance();
     QString title("<html><body><table width = '100%'><tr><td></td><td><h1><center>Interferometry Report for " +
                   dlg.title + "</center></td><td>"
-                  + QDate::currentDate().toString() +
-                  " " +QTime::currentTime().toString()+"<br>DFTFringe Version:"+APP_VERSION+"</td></tr></table>");
+                  + QLocale(QLocale::English).toString(QDate::currentDate(), "dd MMM yyyy") +
+                  " " +QTime::currentTime().toString("HH:mm:ss")+"<br>DFTFringe Version:"+APP_VERSION+"</td></tr></table>");
 
     QString Diameter = (md->isEllipse()) ? " Horizontal Axis: " : " Diameter: " +QString().number(md->diameter,'f',1) ;
     QString ROC = (md->isEllipse()) ? "Vertical Axis: " + QString().number(md->m_verticalAxis) : "ROC: " +  QString().number(md->roc,'f',1);
