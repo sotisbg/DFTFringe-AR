@@ -63,7 +63,11 @@ SurfaceGraph::SurfaceGraph(Q3DSurface *surface)
 
     m_graph->activeTheme()->setType(Q3DTheme::Theme(3));
     QFont font = m_graph->activeTheme()->font();
-    font.setPointSize(20);
+    // Bumped from 20: the axis titles and tick numbers get scaled down again
+    // when the report composites this render with the legend and shrinks the
+    // result to fit the page, so they need to start out larger than what
+    // looks right in the live interactive view.
+    font.setPointSize(28);
     m_graph->activeTheme()->setFont(font);
     m_graph->activeTheme()->setAmbientLightStrength(.5);
     m_graph->scene()->activeLight()->setPosition(QVector3D(600,0,1));
@@ -203,6 +207,10 @@ void SurfaceGraph::setGraphColors(){
     pmp.setPen(Qt::NoPen);
     pmp.drawRect(5, border, 35, height - 2 * border);
     pmp.setPen(Qt::black);
+    // The box above was sized from fm (fnt's metrics) but the numbers were being
+    // drawn in the painter's default font, much smaller than what the box was
+    // sized for - that mismatch is what made the legend scale numbers so small.
+    pmp.setFont(fnt);
     int step = (height - 2 * border) / 5;
     for (int i = 0; i < 6; i++) {
         int yPos = height -i * step -border;
