@@ -23,8 +23,7 @@
 #include <QSettings>
 #include <QGuiApplication>
 #include <QScreen>
-#include <QLabel>
-#include <QApplication>
+#include <qwt_plot_renderer.h>
 contourView::contourView(QWidget *parent, ContourTools *tools) :
     QWidget(parent),
     zoomed(false), ui(new Ui::contourView), tools(tools)
@@ -54,39 +53,45 @@ void contourView::zoom(){
 }
 
 QImage contourView::getPixstatsImage(){
-    //resize(3000,2000);
-        int height = QGuiApplication::primaryScreen()->geometry().height() * .75;
-    QImage psImage = QImage(height, height,QImage::Format_ARGB32 );
-    QPainter p3(&psImage);
-    QSize originalSize = ps->size();
-    ps->resize(height * .7, height);
-    // The layout doesn't settle synchronously just from resize() when ps has
-    // never been shown - deliver it now so imageLabel->size() below reflects
-    // the size we just asked for, not a stale/default one.
-    qApp->processEvents();
+    // Built from ps's own data (the histogram plot, the slope caption, the
+    // native square slope-error image) instead of resizing and rendering the
+    // live pixelStats widget itself. That widget is shared with the
+    // interactive "Pixel Histogram" window (ps->show() elsewhere) - resizing
+    // it here left it however this last left it, forcing the user to shrink
+    // it back down by hand before they could use it again. Composing our own
+    // image also sidesteps the label's setScaledContents(true) stretching the
+    // (square) slope data into an ellipse, and any layout-timing mismatch
+    // between the size we asked for and the size Qt actually laid out.
+    int height = QGuiApplication::primaryScreen()->geometry().height() * .75;
+    int width = height * .7;
+    QImage psImage(width, height, QImage::Format_ARGB32);
+    psImage.fill(Qt::white);
+    QPainter p(&psImage);
 
-    // The slope error circle's label uses setScaledContents(true), which stretches
-    // its (square) pixmap to fill whatever box the layout gives it - here a taller
-    // box than the mirror data is wide, which is what turned the circle into an
-    // ellipse in the report. Re-scale it ourselves, keeping the aspect ratio, just
-    // for this capture, then put the label back the way it was.
-    QLabel *imageLabel = ps->findChild<QLabel*>("image");
-    QPixmap originalPixmap;
-    if (imageLabel){
-        originalPixmap = imageLabel->pixmap(Qt::ReturnByValue);
-        if (!originalPixmap.isNull()){
-            imageLabel->setScaledContents(false);
-            imageLabel->setPixmap(originalPixmap.scaled(imageLabel->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    int histoHeight = height * .35;
+    QwtPlotRenderer renderer;
+    renderer.render(ps->histoPlot(), &p, QRect(0, 0, width, histoHeight));
+
+    int y = histoHeight + 10;
+    QFont captionFont = p.font();
+    captionFont.setBold(true);
+    captionFont.setPointSize(12);
+    p.setFont(captionFont);
+    QRect captionRect(10, y, width - 20, 60);
+    p.drawText(captionRect, Qt::AlignHCenter | Qt::TextWordWrap, ps->slopeCaption());
+    y += 60;
+
+    QImage slope = ps->slopeImage();
+    if (!slope.isNull()){
+        int side = qMin(width - 20, height - y - 10);
+        if (side > 0){
+            QImage scaled = slope.scaled(side, side, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+            int x = (width - scaled.width()) / 2;
+            p.drawImage(x, y, scaled);
+            p.setPen(Qt::black);
+            p.drawRect(x, y, scaled.width() - 1, scaled.height() - 1);
         }
     }
-
-    ps->render(&p3);
-
-    if (imageLabel && !originalPixmap.isNull()){
-        imageLabel->setPixmap(originalPixmap);
-        imageLabel->setScaledContents(true);
-    }
-    ps->resize(originalSize);
 
     return psImage;
 }
