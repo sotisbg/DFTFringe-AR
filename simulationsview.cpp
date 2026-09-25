@@ -611,7 +611,7 @@ void SimulationsView::on_MakePB_clicked()
 
     cv::Mat inside = computeStarTest(nulledSurface(-defocus), fftSize, 3);
     cv::Mat t = fitStarTest(inside, wid,gamma);
-    cv::putText(t,QString("-%1 waves inside").arg(2 * defocus, 5, 'f', 1).toStdString(),cv::Point(20,40),1,1.8,cv::Scalar(255, 255,255),2);
+    cv::putText(t,QString("-%1 waves inside").arg(2 * defocus, 0, 'f', 1).toStdString(),cv::Point(20,40),1,1.8,cv::Scalar(255, 255,255),2);
     wasAliased |= alias;
     if (alias)
     {
@@ -628,7 +628,7 @@ void SimulationsView::on_MakePB_clicked()
     // outside focus star test
     cv::Mat outside = computeStarTest(nulledSurface(defocus),fftSize,3);
     t = fitStarTest(outside,wid ,gamma);
-    cv::putText(t,QString("%1waves outside").arg(2 * defocus, 5, 'f', 1).toStdString(),cv::Point(20,40),1,1.8,cv::Scalar(255, 255,255),2);
+    cv::putText(t,QString("%1 waves outside").arg(2 * defocus, 0, 'f', 1).toStdString(),cv::Point(20,40),1,1.8,cv::Scalar(255, 255,255),2);
     wasAliased |= alias;
     if (alias)
     {

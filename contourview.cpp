@@ -24,6 +24,7 @@
 #include <QGuiApplication>
 #include <QScreen>
 #include <QLabel>
+#include <QApplication>
 contourView::contourView(QWidget *parent, ContourTools *tools) :
     QWidget(parent),
     zoomed(false), ui(new Ui::contourView), tools(tools)
@@ -59,6 +60,10 @@ QImage contourView::getPixstatsImage(){
     QPainter p3(&psImage);
     QSize originalSize = ps->size();
     ps->resize(height * .7, height);
+    // The layout doesn't settle synchronously just from resize() when ps has
+    // never been shown - deliver it now so imageLabel->size() below reflects
+    // the size we just asked for, not a stale/default one.
+    qApp->processEvents();
 
     // The slope error circle's label uses setScaledContents(true), which stretches
     // its (square) pixmap to fill whatever box the layout gives it - here a taller
