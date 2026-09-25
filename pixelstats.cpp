@@ -5,6 +5,7 @@
 #include <qwt_plot_marker.h>
 #include <QDebug>
 #include <QScreen>
+#include <QTextDocument>
 #include <QScrollBar>
 #include <QVBoxLayout>
 #include <qapplication.h>
@@ -303,6 +304,22 @@ void pixelStats::setData(const wavefront *w){
    updateSurface();
    updateHisto();
 }
+
+QImage pixelStats::slopeImage() const{
+    return m_slopeImage;
+}
+
+QString pixelStats::slopeCaption() const{
+    // ui->label_2's text is rich-text ("<b>...</b>"); give back plain text since
+    // the report draws it itself, in its own bold font.
+    QTextDocument doc;
+    doc.setHtml(ui->label_2->text());
+    return doc.toPlainText();
+}
+
+QwtPlot *pixelStats::histoPlot() const{
+    return ui->histo;
+}
 cv::Mat mat2gray(const cv::Mat& src)
 {
     cv::Mat dst;
@@ -468,6 +485,7 @@ void pixelStats::updateSurface(){
                                 sur.rows,
                                 sur.step,
                                 QImage::Format_RGB888).copy();
+            m_slopeImage = tmp;
 
             //ui->image->resize(m_wf->data.cols, m_wf->data.rows);
             // set a scaled pixmap to a w x h window keeping its aspect ratio

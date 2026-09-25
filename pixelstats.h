@@ -2,6 +2,7 @@
 #define PIXELSTATS_H
 
 #include <QWidget>
+#include <QImage>
 #include <opencv2/opencv.hpp>
 #include "wavefront.h"
 #include <qwt_plot.h>
@@ -20,6 +21,12 @@ public:
     explicit pixelStats(QWidget *parent = 0);
     ~pixelStats();
     void setData(const wavefront *w);
+    // Native, square, undistorted slope-error circle - for the PDF report to
+    // compose itself from, instead of rendering (and resizing) the live,
+    // interactive widget.
+    QImage slopeImage() const;
+    QString slopeCaption() const;
+    QwtPlot *histoPlot() const;
 private slots:
     void bounds_valueChanged();
 
@@ -39,6 +46,7 @@ private:
     void updateSurface();
     QScrollArea *scrollArea;
     double slopeLimitArcSec;
+    QImage m_slopeImage;
 };
 
 class QPoint;
