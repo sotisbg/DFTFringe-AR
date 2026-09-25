@@ -23,6 +23,7 @@
 #include <QSettings>
 #include <QGuiApplication>
 #include <QScreen>
+#include <QLabel>
 contourView::contourView(QWidget *parent, ContourTools *tools) :
     QWidget(parent),
     zoomed(false), ui(new Ui::contourView), tools(tools)
@@ -56,8 +57,31 @@ QImage contourView::getPixstatsImage(){
         int height = QGuiApplication::primaryScreen()->geometry().height() * .75;
     QImage psImage = QImage(height, height,QImage::Format_ARGB32 );
     QPainter p3(&psImage);
+    QSize originalSize = ps->size();
     ps->resize(height * .7, height);
+
+    // The slope error circle's label uses setScaledContents(true), which stretches
+    // its (square) pixmap to fill whatever box the layout gives it - here a taller
+    // box than the mirror data is wide, which is what turned the circle into an
+    // ellipse in the report. Re-scale it ourselves, keeping the aspect ratio, just
+    // for this capture, then put the label back the way it was.
+    QLabel *imageLabel = ps->findChild<QLabel*>("image");
+    QPixmap originalPixmap;
+    if (imageLabel){
+        originalPixmap = imageLabel->pixmap(Qt::ReturnByValue);
+        if (!originalPixmap.isNull()){
+            imageLabel->setScaledContents(false);
+            imageLabel->setPixmap(originalPixmap.scaled(imageLabel->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+        }
+    }
+
     ps->render(&p3);
+
+    if (imageLabel && !originalPixmap.isNull()){
+        imageLabel->setPixmap(originalPixmap);
+        imageLabel->setScaledContents(true);
+    }
+    ps->resize(originalSize);
 
     return psImage;
 }

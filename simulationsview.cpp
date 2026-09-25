@@ -112,6 +112,11 @@ void SimulationsView::initMTFPlot(){
     ui->MTF->detachItems(QwtPlotItem::Rtti_PlotItem);
     ui->MTF->setAxisTitle( QwtPlot::yLeft, "Percent Contrast" );
 
+    // The default widget font makes the axis numbers and title/legend hard to
+    // read once this plot is shrunk to fit the PDF report.
+    QFont plotFont = ui->MTF->font();
+    plotFont.setPointSize(14);
+    ui->MTF->setFont(plotFont);
 
     QwtPlotGrid *grid = new QwtPlotGrid();
     grid->enableXMin(true);
@@ -120,6 +125,7 @@ void SimulationsView::initMTFPlot(){
     m_arcSecScaleDraw  =  new arcSecScaleDraw(mirrorDlg::get_Instance()->diameter);
     ui->MTF->setAxisScaleDraw(ui->MTF->xBottom, m_arcSecScaleDraw);
     QwtPlotLegendItem *customLegend = new QwtPlotLegendItem();
+    customLegend->setFont(plotFont);
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
     // keep compatibility with newer version of QWT used in QT6
     customLegend->setAlignmentInCanvas(Qt::AlignLeft | Qt::AlignBottom);
@@ -130,6 +136,10 @@ void SimulationsView::initMTFPlot(){
     QwtPlotTextLabel *t = new QwtPlotTextLabel();
     QwtText title( "MTF" );
     title.setRenderFlags( Qt::AlignHCenter | Qt::AlignTop );
+    QFont titleFont = plotFont;
+    titleFont.setPointSize(18);
+    titleFont.setBold(true);
+    title.setFont(titleFont);
     t->setText(title);
     t->attach(ui->MTF);
 }
@@ -601,7 +611,7 @@ void SimulationsView::on_MakePB_clicked()
 
     cv::Mat inside = computeStarTest(nulledSurface(-defocus), fftSize, 3);
     cv::Mat t = fitStarTest(inside, wid,gamma);
-    cv::putText(t,QString("-%1 waves inside").arg(2 * defocus, 5, 'f', 1).toStdString(),cv::Point(50,30),1,1,cv::Scalar(255, 255,255));
+    cv::putText(t,QString("-%1 waves inside").arg(2 * defocus, 5, 'f', 1).toStdString(),cv::Point(20,40),1,1.8,cv::Scalar(255, 255,255),2);
     wasAliased |= alias;
     if (alias)
     {
@@ -618,7 +628,7 @@ void SimulationsView::on_MakePB_clicked()
     // outside focus star test
     cv::Mat outside = computeStarTest(nulledSurface(defocus),fftSize,3);
     t = fitStarTest(outside,wid ,gamma);
-    cv::putText(t,QString("%1waves outside").arg(2 * defocus, 5, 'f', 1).toStdString(),cv::Point(50,30),1,1,cv::Scalar(255, 255,255));
+    cv::putText(t,QString("%1waves outside").arg(2 * defocus, 5, 'f', 1).toStdString(),cv::Point(20,40),1,1.8,cv::Scalar(255, 255,255),2);
     wasAliased |= alias;
     if (alias)
     {
@@ -642,7 +652,7 @@ void SimulationsView::on_MakePB_clicked()
     cv::Mat focused = computeStarTest(nulledSurface(0), fftSize,  ui->centerMagnifySB->value());
     t = fitStarTest(zoomMat(focused,ui->centerMagnifySB->value()), wid ,gamma/2);
     QString focusedtext = QString("Focused magnified by %1x").arg(ui->centerMagnifySB->value());
-    cv::putText(t,focusedtext.toStdString().c_str(),cv::Point(20,20),1,1,cv::Scalar(255, 255,255));
+    cv::putText(t,focusedtext.toStdString().c_str(),cv::Point(20,40),1,1.8,cv::Scalar(255, 255,255),2);
     QImage focusDisplay ((uchar*)t.data, t.cols, t.rows, t.step, QImage::Format_RGB888);
     ui->Focused->setPixmap(QPixmap::fromImage(focusDisplay.copy()));
 

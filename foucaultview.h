@@ -52,6 +52,7 @@ public:
 
     void setSurface(wavefront * wf);
     bool saveOnlyFoucault();
+    bool isAutocollimating() const;
     bool needsDrawing;
 
     // The Refactored Static Engine - Callable from other classes

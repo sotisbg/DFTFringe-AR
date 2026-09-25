@@ -3540,14 +3540,26 @@ void SurfaceManager::report(){
         QImage legend(lsize, QImage::Format_ARGB32);
         m_SurfaceGraph->m_legend->render(&legend);
 
-        oglw.getLegend()->setPixmap(QPixmap::fromImage(legend.scaledToWidth(oglw.ui->legend->size().width())));
+        // Don't scale the legend pixmap down to the "legend" label's width here -
+        // at this point oglw hasn't been shown yet, so that width is whatever
+        // Designer left it at (a couple of pixels for the "L" placeholder text),
+        // which squashed the scale numbers down to nothing. Let it flow through
+        // at its natural (already correctly sized) resolution instead.
+        oglw.getLegend()->setPixmap(QPixmap::fromImage(legend));
         oglw.getModel()->setPixmap(QPixmap::fromImage(SurfaceImage));
         oglw.show();    // show on stack to get metrics.
-        QFontMetrics fm =    oglw.fontMetrics();
+        // Use the caption's actual font here, not the widget's default one - this
+        // reserves enough width for "Waves at 550nm" in the font it's really drawn
+        // in, instead of clipping it.
+        QFontMetrics fm(oglw.ui->Title->font());
         QRect tw = fm.boundingRect("Waves 550 nm Waves");
         QRect sg = oglw.getModel()->geometry();
 
-        int surfw = sg.width() + tw.width();
+        // The right-hand column is as wide as its widest content: the caption
+        // text or the legend pixmap (now left at its natural, correctly-sized
+        // width instead of being squashed - see above). Reserving only the
+        // caption's width here cut the legend off.
+        int surfw = sg.width() + qMax(tw.width(), lsize.width());
         int surfh = sg.height();
         QImage surfaceandLegend(surfw,surfh, QImage::Format_ARGB32);
         QPainter painterSurfaceandLegend(&surfaceandLegend);
@@ -3598,8 +3610,13 @@ void SurfaceManager::report(){
         doc->addResource(QTextDocument::ImageResource,  QUrl(fvpng),
                          QVariant((*fvImage).scaledToWidth(dlg.ronchiWidth * finalWidth)));
 
-        imagesHtml.append(" <br><img src='" + fvpng + "'>");
-        imagesHtml.append("<h2>Ronchi and Foucault images simulated from analysis data.</h2>");
+        // Keep the image on the same page as its own caption instead of letting it
+        // fall wherever the previous section's flow happens to end.
+        imagesHtml.append("<p style=\"page-break-before:always\"><br><img src='" + fvpng + "'></p>");
+        QString ronchiCaption("Ronchi and Foucault images simulated from analysis data.");
+        if (fv->isAutocollimating())
+            ronchiCaption += " Simulated at autocollimation (double pass), with the mirror's null removed.";
+        imagesHtml.append("<h2>" + ronchiCaption + "</h2>");
         delete fvImage;
         ((MainWindow*)(parent()))->setTab(currentTab);
     }

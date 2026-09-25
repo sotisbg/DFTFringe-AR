@@ -11,7 +11,7 @@ oglRendered::oglRendered(QWidget *parent) :
     // report, never shown interactively, so it's safe to size its captions
     // for a printed page rather than the small default UI font.
     QFont f = ui->Title->font();
-    f.setPointSize(24);
+    f.setPointSize(16);
     ui->Title->setFont(f);
     ui->label->setFont(f);
 }
