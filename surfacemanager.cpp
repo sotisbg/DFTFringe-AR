@@ -3558,7 +3558,11 @@ void SurfaceManager::report(){
         // add star test if not testing a
         if (!md->isEllipse()){
             SimulationsView *sv = SimulationsView::getInstance(0);
-            sv->resize(width,width);
+            // Render at the same modest inflation the Ronchi/Foucault capture below uses.
+            // Blowing this up to the printer's pixel width (as before) left the star test
+            // captions and the PSF/MTF plot text at a fixed point size on a much bigger canvas,
+            // so they came out a tiny fraction of their normal size once scaled back down.
+            sv->resize(finalWidth * 2., finalWidth * 2.);
             sv->on_MakePB_clicked();
             QImage svImage = QImage(sv->size(),QImage::Format_ARGB32 );
 
@@ -3569,7 +3573,8 @@ void SurfaceManager::report(){
                   QVariant(svImage.scaledToWidth(dlg.startestWidth * finalWidth,
                                                  Qt::SmoothTransformation)));
                 imagesHtml.append("<p ><br>&nbsp;</p>");
-                imagesHtml.append(" <img src='" +svpng + "'></p>");
+                imagesHtml.append(" <img src='" +svpng + "'>");
+                imagesHtml.append("<h2>Star test simulation (defocused, in and out of focus) and PSF/MTF plots from analysis data.</h2>");
         }
     }
     // Ronchi and Foucault
