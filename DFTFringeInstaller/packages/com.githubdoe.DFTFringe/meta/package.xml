@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Package>
-    <DisplayName>DFTFringe-astig</DisplayName>
-    <Description>Install DFTFringe-astig (test stand astig by least squares)</Description>
+    <DisplayName>DFTFringe-AR</DisplayName>
+    <Description>Install DFTFringe-AR</Description>
     <Version>MY_AUTOMATED_VERSION_STRING</Version>
     <ReleaseDate>MY_AUTOMATED_DATE_STRING</ReleaseDate>
     <Default>true</Default>
