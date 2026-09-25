@@ -27,7 +27,13 @@ psfPlot::psfPlot(QWidget *parent) :
     ui(new Ui::psfPlot)
 {
     ui->setupUi(this);
+    // The default widget font makes the axis numbers and title/legend hard to
+    // read once this plot is shrunk to fit the PDF report.
+    QFont plotFont = font();
+    plotFont.setPointSize(14);
+    setFont(plotFont);
     QwtPlotLegendItem *customLegend = new QwtPlotLegendItem();
+    customLegend->setFont(plotFont);
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
     // keep compatibility with newer version of QWT used in QT6
     customLegend->setAlignmentInCanvas(Qt::AlignLeft | Qt::AlignBottom);
@@ -38,6 +44,10 @@ psfPlot::psfPlot(QWidget *parent) :
     QwtPlotTextLabel *t = new QwtPlotTextLabel();
     QwtText title( "PSF" );
     title.setRenderFlags( Qt::AlignHCenter | Qt::AlignTop );
+    QFont titleFont = plotFont;
+    titleFont.setPointSize(18);
+    titleFont.setBold(true);
+    title.setFont(titleFont);
     t->setText(title);
     enableAxis(QwtPlot::xBottom, false);
     t->attach(this);

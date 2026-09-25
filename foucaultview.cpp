@@ -283,6 +283,9 @@ QImage *foucaultView::render(){
     return result;
 }
 
+bool foucaultView::isAutocollimating() const{
+    return ui->autocollimation->isChecked();
+}
 void foucaultView::saveRonchiImage(){
     const QPixmap pm = ui->ronchiViewLb->pixmap(Qt::ReturnByValue);
     pm.save(getSaveFileName("foucault"));
