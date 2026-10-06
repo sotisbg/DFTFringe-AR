@@ -3437,7 +3437,7 @@ void SurfaceManager::report(){
             "<table border='1' width = '100%'><tr><td>" + Diameter + " mm</td><td>" + ROC + " mm</td>"
             "<td>" +FNumber+ "</td></tr>"
             "<tr><td> RMS: " + QString().number(wf->std,'f',3) +
-                QString(" waves at %1 nm").arg(outputLambda, 6, 'f', 1) + "<br><b>PV: " + pvText + "</b></td><td>Strehl: " + metrics->mStrehl->text() +
+                QString(" waves at %1 nm").arg(outputLambda, 6, 'f', 1) + "<br>PV: " + pvText + "</td><td>Strehl: " + metrics->mStrehl->text() +
             "</td><td>" + BFC + "</td></tr>"
             "<tr><td>" + ((md->isEllipse()) ? "":"Desired Conic: " + QString::number(md->cc)) + "</td><td>" +
             ((md->doNull) ? QString("SANull: %1").arg(md->z8 * md->cc, 6, 'f', 4) : "No software Null") + "</td>"
