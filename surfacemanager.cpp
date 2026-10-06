@@ -3549,8 +3549,10 @@ void SurfaceManager::report(){
         QImage SurfaceImage =m_SurfaceGraph->render(1000, 1000);
         const QPixmap pm = m_SurfaceGraph->m_legend->pixmap(Qt::ReturnByValue);
         QSize lsize = pm.size();
-        QImage legend(lsize, QImage::Format_ARGB32);
-        m_SurfaceGraph->m_legend->render(&legend);
+        // Take the legend straight from its pixmap. Rendering the QLabel instead
+        // clipped it to the label's (narrower) on-screen width, which cut the scale
+        // numbers down to their first "0" and left only the tick marks.
+        QImage legend = pm.toImage().convertToFormat(QImage::Format_ARGB32);
 
         // Don't scale the legend pixmap down to the "legend" label's width here -
         // at this point oglw hasn't been shown yet, so that width is whatever
