@@ -3437,9 +3437,8 @@ void SurfaceManager::report(){
             "<table border='1' width = '100%'><tr><td>" + Diameter + " mm</td><td>" + ROC + " mm</td>"
             "<td>" +FNumber+ "</td></tr>"
             "<tr><td> RMS: " + QString().number(wf->std,'f',3) +
-                QString(" waves at %1 nm</td><td>Strehl: ").arg(outputLambda, 6, 'f', 1) + metrics->mStrehl->text() +
+                QString(" waves at %1 nm").arg(outputLambda, 6, 'f', 1) + "<br><b>PV: " + pvText + "</b></td><td>Strehl: " + metrics->mStrehl->text() +
             "</td><td>" + BFC + "</td></tr>"
-            "<tr><td><b>PV: " + pvText + "</b></td><td></td><td></td></tr>"
             "<tr><td>" + ((md->isEllipse()) ? "":"Desired Conic: " + QString::number(md->cc)) + "</td><td>" +
             ((md->doNull) ? QString("SANull: %1").arg(md->z8 * md->cc, 6, 'f', 4) : "No software Null") + "</td>"
             "<td>Waves per fringe: " + QString::number(md->fringeSpacing) + "<br>Interferogram Wave length: "+ QString::number(md->lambda) + "nm</td></tr>"
@@ -3646,8 +3645,7 @@ void SurfaceManager::report(){
                            sigram + "'></td></tr></table><br>");
     }
     if (dlg.ui->showHistogram->isChecked()){
-        // add pixel stats window
-        m_contourView->getPixelstats()->resize(width/3,4 * width/3);
+        // add pixel stats window (composed from data, the live widget is left alone)
         QImage pixStats = m_contourView->getPixstatsImage();
         QString pixStat("mydata://pixStat.png");
         doc->addResource(QTextDocument::ImageResource, QUrl(pixStat),
