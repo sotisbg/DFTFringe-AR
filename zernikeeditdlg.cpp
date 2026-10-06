@@ -193,6 +193,16 @@ void zernikeEditDlg::on_useCurrent_clicked()
 
 
 
+void zernikeEditDlg::importCurrentAndSave()
+{
+    if (m_sm->m_wavefronts.size() == 0) {
+        QMessageBox::warning(0,"No wave fronts available!", "First load or create a wave front");
+        return;
+    }
+    on_useCurrent_clicked();
+    on_save_clicked();
+}
+
 void zernikeEditDlg::on_maxOrder_valueChanged(int arg1)
 {
     QSettings set;

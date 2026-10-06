@@ -1161,6 +1161,7 @@ em;
    <addaction name="actionNext_Wave_Front"/>
    <addaction name="actionDelete_wave_front"/>
    <addaction name="actionSubtract_wave_front"/>
+   <addaction name="actionSave_Zernike_file"/>
    <addaction name="separator"/>
   </widget>
   <action name="actionLoad_Interferogram">
@@ -1267,6 +1268,14 @@ em;
    </property>
    <property name="statusTip">
     <string>Subtract another wavefront from the current one.</string>
+   </property>
+  </action>
+  <action name="actionSave_Zernike_file">
+   <property name="text">
+    <string>Save Zernike file</string>
+   </property>
+   <property name="statusTip">
+    <string>Fit the current wavefront and save its Zernike values to a .zrn file.</string>
    </property>
   </action>
   <action name="actionIgram">
