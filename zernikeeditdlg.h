@@ -15,6 +15,7 @@ class zernikeEditDlg : public QDialog
 public:
     explicit zernikeEditDlg(SurfaceManager *sfm ,QWidget *parent = 0);
     ~zernikeEditDlg();
+    void importCurrentAndSave();
 signals:
     void termCountChanged(int);
 private slots:

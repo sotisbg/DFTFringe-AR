@@ -18,6 +18,7 @@
 #include <qwt_plot_curve.h>
 #include <qwt_plot_directpainter.h>
 #include <qwt_text.h>
+#include <qwt_plot_textlabel.h>
 #include <opencv2/core/core.hpp>
 #include <opencv2/highgui/highgui.hpp>
 #include <opencv2/imgproc/imgproc.hpp>
@@ -29,6 +30,22 @@ int idx = -1;   // ndx of which marker is being moved by mouse.
 QwtPlotMarker* g_lbMarker;
 QwtPlotMarker* g_centerMarker;
 QwtPlotMarker* g_ubMarker;
+QwtPlotTextLabel* g_pvLabel = nullptr;
+
+// Large PV caption pinned to the right-hand (empty) part of the histogram canvas,
+// so it never sits on top of the graph's peak.
+static void setPvLabel(double pv)
+{
+    if (!g_pvLabel)
+        return;
+    QwtText t(QString("PV %1").arg(pv, 0, 'f', 3));
+    QFont f = t.font();
+    f.setPointSize(18);
+    f.setBold(true);
+    t.setFont(f);
+    t.setRenderFlags(Qt::AlignRight | Qt::AlignTop);
+    g_pvLabel->setText(t);
+}
 CanvasPicker::CanvasPicker( QwtPlot *plot ):
     QObject( plot ),
     d_selectedMarker( NULL )
@@ -198,7 +215,7 @@ void CanvasPicker::move( QPoint pos )
         d_selectedMarker->setLabel( QString("%1").arg(x, 0, 'f') ) ;
     }
     g_centerMarker->setXValue( (g_ub + g_lb)/2.);
-    g_centerMarker->setLabel(QString("PV %1").arg(g_ub -g_lb, 0, 'f'));
+    setPvLabel(g_ub - g_lb);
 
     /*
        Enable QwtPlotCanvas::ImmediatePaint, so that the canvas has been
@@ -575,12 +592,15 @@ void  pixelStats::updateHisto(){
     mlY->attach( ui->histo);
 
     QwtPlotMarker *lab = g_centerMarker = new QwtPlotMarker();
-    lab->setLabel(QString("PV %1").arg(ub -lb, 0, 'f'));
     lab->setLineStyle( QwtPlotMarker::VLine );
     lab->setLinePen(Qt::black,0, Qt::DotLine);
     lab->setXValue((ub+lb)/2.);
-    lab->setLabelAlignment(  Qt::AlignTop );
     lab->attach(ui->histo);
+
+    g_pvLabel = new QwtPlotTextLabel();
+    g_pvLabel->setMargin(10);
+    setPvLabel(ub - lb);
+    g_pvLabel->attach(ui->histo);
 
 
     //wftHistogram->resize(640,480);

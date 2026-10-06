@@ -1528,6 +1528,13 @@ void MainWindow::on_actionEdit_Zernike_values_triggered()
     connect(dlg, &zernikeEditDlg::termCountChanged, metrics, &metricsDisplay::resizeRows);
 }
 
+void MainWindow::on_actionSave_Zernike_file_triggered()
+{
+    // Same as Tools - Edit Zernike values - Import current wavefront - Save to file.
+    zernikeEditDlg dlg(m_surfaceManager, this);
+    dlg.importCurrentAndSave();
+}
+
 void MainWindow::on_actionCamera_Calibration_triggered()
 {
     if(m_cameraCalibWizard == nullptr){

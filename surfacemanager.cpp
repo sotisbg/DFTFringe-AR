@@ -3365,6 +3365,7 @@ void showImage(const QImage &img, const QString &title){
 }
 
 #include "ui_reportdlg.h"
+extern double g_lb, g_ub;   // histogram PV bounds (pixelstats.cpp)
 void SurfaceManager::report(){
 
 
@@ -3421,12 +3422,24 @@ void SurfaceManager::report(){
     QString ROC = (md->isEllipse()) ? "Vertical Axis: " + QString().number(md->m_verticalAxis) : "ROC: " +  QString().number(md->roc,'f',1);
     QString FNumber = (md->isEllipse()) ? "" : "Fnumber: " + QString().number(md->FNumber,'f',1);
     QString BFC = (md->isEllipse()) ? " Flat" : "Best Fit CC: " +metrics->mCC->text();
+    // PV as a simple fraction 1/N (N a round number), from the histogram bounds;
+    // falls back to the full wavefront range if the histogram was never set up.
+    double pvVal = g_ub - g_lb;
+    if (!(pvVal > 0))
+        pvVal = wf->max - wf->min;
+    QString pvText = "n/a";
+    if (pvVal > 0){
+        double n = 1. / pvVal;
+        int nr = qMax(1, qRound(n));
+        pvText = QString("1/%1 wave (%2)").arg(nr).arg(pvVal, 0, 'f', 3);
+    }
     QString html = "<p style=\'font-size: 2em'>"
             "<table border='1' width = '100%'><tr><td>" + Diameter + " mm</td><td>" + ROC + " mm</td>"
             "<td>" +FNumber+ "</td></tr>"
             "<tr><td> RMS: " + QString().number(wf->std,'f',3) +
                 QString(" waves at %1 nm</td><td>Strehl: ").arg(outputLambda, 6, 'f', 1) + metrics->mStrehl->text() +
             "</td><td>" + BFC + "</td></tr>"
+            "<tr><td><b>PV: " + pvText + "</b></td><td></td><td></td></tr>"
             "<tr><td>" + ((md->isEllipse()) ? "":"Desired Conic: " + QString::number(md->cc)) + "</td><td>" +
             ((md->doNull) ? QString("SANull: %1").arg(md->z8 * md->cc, 6, 'f', 4) : "No software Null") + "</td>"
             "<td>Waves per fringe: " + QString::number(md->fringeSpacing) + "<br>Interferogram Wave length: "+ QString::number(md->lambda) + "nm</td></tr>"
