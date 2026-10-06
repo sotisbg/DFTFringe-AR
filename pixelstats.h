@@ -2,6 +2,8 @@
 #define PIXELSTATS_H
 
 #include <QWidget>
+#include <QShowEvent>
+#include <QHideEvent>
 #include <QImage>
 #include <opencv2/opencv.hpp>
 #include "wavefront.h"
@@ -27,6 +29,9 @@ public:
     QImage slopeImage() const;
     QString slopeCaption() const;
     QwtPlot *histoPlot() const;
+protected:
+    void showEvent(QShowEvent *e) override;
+    void hideEvent(QHideEvent *e) override;
 private slots:
     void bounds_valueChanged();
 
@@ -47,6 +52,7 @@ private:
     QScrollArea *scrollArea;
     double slopeLimitArcSec;
     QImage m_slopeImage;
+    QSize m_shownSize;   // window size to restore when shown again
 };
 
 class QPoint;

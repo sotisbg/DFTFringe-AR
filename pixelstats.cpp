@@ -313,13 +313,33 @@ pixelStats::~pixelStats()
 
 }
 
+void pixelStats::showEvent(QShowEvent *e)
+{
+    // The slope image label is adjustSize()d to its native size while hidden,
+    // which stretched the window the next time it was opened. Put back the size
+    // it had when it was last closed.
+    if (m_shownSize.isValid())
+        resize(m_shownSize);
+    QWidget::showEvent(e);
+}
+
+void pixelStats::hideEvent(QHideEvent *e)
+{
+    if (!e->spontaneous())
+        m_shownSize = size();
+    QWidget::hideEvent(e);
+}
+
 void pixelStats::setData(const wavefront *w){
+   const QSize keep = size();
    m_wf = w;
    g_ub = m_wf->min +  (m_wf->max-m_wf->min) * .9;
    g_lb = m_wf->min +  (m_wf->max-m_wf->min) * .1;
 
    updateSurface();
    updateHisto();
+   if (isVisible())
+       resize(keep);
 }
 
 QImage pixelStats::slopeImage() const{
