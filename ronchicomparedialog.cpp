@@ -164,7 +164,8 @@ void RonchiCompareDialog::updateOverlay(int val)
         // Grayscale values below threshold are preserved as intensity in specific channels
         cv::Mat zero = cv::Mat::zeros(m1.size(), CV_8UC1);
         std::vector<cv::Mat> channels1;
-        channels1 = {zero, zero, m1};
+        // BGR order: first image cyan, second red - the same colours as the name labels above
+        channels1 = {m1, m1, zero};
         cv::Mat result1;
         cv::merge(channels1, result1);
 
@@ -172,7 +173,7 @@ void RonchiCompareDialog::updateOverlay(int val)
         cv::threshold(m2, mask2, 127, 255, cv::THRESH_BINARY_INV);
         cv::Mat result2;
         std::vector<cv::Mat> channels2;
-        channels2 = {m2, m2, zero};
+        channels2 = {zero, zero, m2};
 
         cv::merge(channels2, result2);
 

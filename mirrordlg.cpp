@@ -834,8 +834,16 @@ void mirrorDlg::on_annulusHelp_clicked()
 
 void mirrorDlg::on_annularDiameter_valueChanged(double arg1)
 {
-    m_annularObsPercent = arg1/diameter;
+    // Block the percent box: its rounded value would otherwise be written back
+    // into this box while the user is still typing the diameter.
+    m_annularObsPercent = arg1 * ((mm) ? 1. : 25.4) / diameter;
+    ui->annulusPercent->blockSignals(true);
     ui->annulusPercent->setValue(m_annularObsPercent * 100);
+    ui->annulusPercent->blockSignals(false);
+
+    if (m_connectAnnulusToObs){
+        ui->obs->setText(QString::number(arg1));
+    }
     updateZ8();
 }
 
