@@ -14,7 +14,8 @@ Component.prototype.createOperations = function()
             /* Add start menu shortcut */
             component.addOperation("CreateShortcut", "@TargetDir@/DFTFringe.exe", "@StartMenuDir@/DFTFringe.lnk");
             component.addOperation("CreateShortcut", "@TargetDir@/res/Help/help.html", "@StartMenuDir@/DFTFringe help.lnk");
-            component.addOperation("CreateShortcut", "@TargetDir@/maintenancetool.exe", "@StartMenuDir@/uninstall.lnk");
+            /* Windows hides Start menu shortcuts whose name contains "uninstall" */
+            component.addOperation("CreateShortcut", "@TargetDir@/maintenancetool.exe", "@StartMenuDir@/DFTFringe Maintenance Tool.lnk");
 
             /* Add desktop shortcut */
             var checkboxForm = component.userInterface( "DesktopShortcutCheckBoxForm" );
