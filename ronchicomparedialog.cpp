@@ -136,7 +136,8 @@ cv::Mat RonchiCompareDialog::qImageToMat(const QImage& image)
 
 void RonchiCompareDialog::updateOverlay(int val)
 {
-    double alpha = (100 - val) / 100.0;
+    // Slider left = first image (cyan, left label), right = second image (red, right label)
+    double alpha = val / 100.0;
 
     cv::Mat m1 = qImageToMat(m_q1);
     cv::Mat m2 = qImageToMat(m_q2);
