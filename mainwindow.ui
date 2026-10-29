@@ -1160,8 +1160,8 @@ em;
    <addaction name="actionPrevious_Wave_front"/>
    <addaction name="actionNext_Wave_Front"/>
    <addaction name="actionDelete_wave_front"/>
-   <addaction name="actionSubtract_wave_front"/>
    <addaction name="actionSave_Zernike_file"/>
+   <addaction name="actionSubtract_wave_front"/>
    <addaction name="separator"/>
   </widget>
   <action name="actionLoad_Interferogram">

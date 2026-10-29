@@ -96,6 +96,30 @@ MainWindow::MainWindow(QWidget *parent) :
     this->setAttribute(Qt::WA_DeleteOnClose);
     ui->toolBar->setStyleSheet("QToolBar { spacing: 10px;}");
 
+    // Text-only buttons fill the full toolbar height (same as the 40px icon buttons)
+    // instead of a thin strip in the middle of the row.
+    QWidget *iconBtn = ui->toolBar->widgetForAction(ui->actionLoad_Interferogram);
+    int toolBtnHeight = (iconBtn) ? iconBtn->sizeHint().height() : 48;
+    const QString textToolButtonStyle("QToolButton {"
+                                        "border-style: outset;"
+                                        "border-width: 2px;"
+                                        "border-radius: 6px;"
+                                        "border-color: darkgray;"
+                                        "font: bold 12px;"
+                                        "padding: 4px 12px;}"
+                                    "QToolButton:hover {background-color: lightblue;}"
+                                    "QToolButton:pressed {border-style: inset;}");
+    QList<QAction *> textActions = {ui->actionRead_WaveFront, ui->actionSave_Zernike_file,
+                                    ui->actionSubtract_wave_front};
+    foreach (QAction *a, textActions){
+        QWidget *w = ui->toolBar->widgetForAction(a);
+        if (!w)
+            continue;
+        w->setStyleSheet(textToolButtonStyle);
+        w->setMinimumHeight(toolBtnHeight);
+        w->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
+    }
+
     ui->SelectOutSideOutline->setChecked(true);
     setCentralWidget(ui->tabWidget);
 
