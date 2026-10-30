@@ -48,8 +48,11 @@ public:
     double m_defocus;
     double m_defocusInmm;
     void setBlurText(const QString &txt);
+    void setGaussianControls(bool enabled, double value);
+    void setGaussianStateText(const QString & str);
     void nameChangedN(int, const QString&);
     void select(int item);
+    void deleteLast();
 
 signals:
     void doxform(QList<int>);

@@ -57,6 +57,8 @@ win32 {
     LIBS += -L$$PWD\..\build_openCV\install\x64\mingw\bin -llibopencv_highgui4120
     LIBS += -L$$PWD\..\build_openCV\install\x64\mingw\bin -llibopencv_imgcodecs4120
     LIBS += -L$$PWD\..\build_openCV\install\x64\mingw\bin -llibopencv_imgproc4120
+    LIBS += -L$$PWD\..\build_openCV\install\x64\mingw\bin -llibopencv_video4120
+    LIBS += -L$$PWD\..\build_openCV\install\x64\mingw\bin -llibopencv_videoio4120
     LIBS += -L$$PWD\..\build_libraw\install\lib -lraw   # LibRaw (static) for camera RAW support
     LIBS += -lws2_32  # Winsock: LibRaw needs htons/ntohs/htonl/ntohl on Windows
     LIBS += -ldbghelp # for SetUnhandledExceptionFilter
@@ -86,6 +88,8 @@ unix: !mac {
     LIBS += -lopencv_highgui
     LIBS += -lopencv_imgcodecs
     LIBS += -lopencv_imgproc
+    LIBS += -lopencv_video
+    LIBS += -lopencv_videoio
     LIBS += -L/usr/local/qwt-6.3.0/lib -lqwt
     LIBS += -lraw     # LibRaw for camera RAW support
     LIBS += -lz       # zip compression library needed for cnpy.cpp
@@ -102,11 +106,8 @@ macx {
     CONFIG += app_bundle
     CONFIG += sdk_no_version_check
     CONFIG += link_pkgconfig
-    CONFIG += silent
 
-    QMAKE_FULL_VERSION=APP_VERSION
-    QMAKE_MACOSX_DEPLOYMENT_TARGET = 11.0
-    QMAKE_APPLE_DEVICE_ARCHS = x86_64 arm64
+    QMAKE_APPLE_DEVICE_ARCHS = $$QMAKE_HOST.arch
 
     CONFIG( debug, debug|release )   { DESTDIR = build/debug }
     CONFIG( release, debug|release ) { DESTDIR = build/release }
@@ -115,32 +116,32 @@ macx {
     OBJECTS_DIR = $$DESTDIR/.obj #these change between build and release.
     RCC_DIR = $$DESTDIR/.qrc
     UI_DIR = $$DESTDIR/.ui
-    QMAKE_MKDIR = /usr/local/bin/mkdir # This tells QMAKE which mkdir command to use.
-    QMAKE_PKG_CONFIG = /opt/homebrew/bin/pkg-config # This tells QMAKE which pkg-config executable to use.
-    PKG_CONFIG_PATH = $$[QT_INSTALL_LIBS]/pkgconfig
-    INCLUDEPATH += -I$$[QT_INSTALL_PLUGINS]
-    LIBS += -L$$[QT_INSTALL_PLUGINS]
-    PKGCONFIG += armadillo opencv Qt5Qwt6 libraw
 
-    message(........QT_VERSION: $$[QT_VERSION])
-    message(.QT_INSTALL_PREFIX: $$[QT_INSTALL_PREFIX])
-    message(QT_INSTALL_HEADERS: $$[QT_INSTALL_HEADERS])
-    message(...QT_INSTALL_LIBS: $$[QT_INSTALL_LIBS])
-    message(QT_INSTALL_PLUGINS: $$[QT_INSTALL_PLUGINS])
-    message(...................)
-    message(...........DESTDIR: $$DESTDIR)
-    message(...........MOC_DIR: $$MOC_DIR)
-    message(.......OBJECTS_DIR: $$OBJECTS_DIR)
-    message(...........RCC_DIR: $$RCC_DIR)
-    message(............UI_DIR: $$UI_DIR)
-    message(...................)
-    message(.......QMAKE_MKDIR: $$QMAKE_MKDIR)
-    message(..QMAKE_PKG_CONFIG: $$QMAKE_PKG_CONFIG)
-    message(...PKG_CONFIG_PATH: $$PKG_CONFIG_PATH)
-    message(.......INCLUDEPATH: $$INCLUDEPATH)
-    message(..............LIBS: $$LIBS)
-    message(.........PKGCONFIG: $$PKGCONFIG)
-    message(............CONFIG: $$CONFIG)
+    PKGCONFIG += armadillo Qt6Qwt6 libraw
+
+    packagesExist(opencv4) {
+        OPENCV_PACKAGE = opencv4
+    } else {
+        OPENCV_PACKAGE = opencv5
+    }
+
+    QMAKE_CXXFLAGS += $$system(pkg-config --cflags-only-I $$OPENCV_PACKAGE)
+    LIBS += $$system(pkg-config --libs-only-L $$OPENCV_PACKAGE)
+    LIBS += -lopencv_calib3d
+    LIBS += -lopencv_core
+    LIBS += -lopencv_features2d
+    LIBS += -lopencv_highgui
+    LIBS += -lopencv_imgcodecs
+    LIBS += -lopencv_imgproc
+    LIBS += -lopencv_video
+    LIBS += -lopencv_videoio
+
+    QWT_FRAMEWORK_HEADERS = $$system(pkg-config --variable=libdir Qt6Qwt6)/qwt.framework/Headers
+    exists($$QWT_FRAMEWORK_HEADERS): INCLUDEPATH += $$QWT_FRAMEWORK_HEADERS
+
+    LIBS += -lz
+
+    DEFINES += BOOST_STACKTRACE_GNU_SOURCE_NOT_REQUIRED
 }
 
 # Below are the includes for source files and other resources, sorted alphabetically. ##################################
@@ -162,7 +163,7 @@ SOURCES += SingleApplication/singleapplication.cpp \
     astigpolargraph.cpp \
     astigscatterplot.cpp \
     astigstatsdlg.cpp \
-	  autoinvertdlg.cpp \
+    autoinvertdlg.cpp \
     averagewavefrontfilesdlg.cpp \
     batchigramwizard.cpp \
     bathastigdlg.cpp \
@@ -182,6 +183,7 @@ SOURCES += SingleApplication/singleapplication.cpp \
     contourview.cpp \
     counterrotationdlg.cpp \
     cpoint.cpp \
+    custom3dinputhandler.cpp \
     defocusdlg.cpp \
     dftarea.cpp \
     dftcolormap.cpp \
@@ -200,6 +202,9 @@ SOURCES += SingleApplication/singleapplication.cpp \
     intensityplot.cpp \
     jitteroutlinedlg.cpp \
     lensetablemodel.cpp \
+    liveimageview.cpp \
+    liveviewdialog.cpp \
+    liveviewhistory.cpp \
     main.cpp \
     mainwindow.cpp \
     messagereceiver.cpp \
@@ -262,6 +267,7 @@ SOURCES += SingleApplication/singleapplication.cpp \
     usercolormapdlg.cpp \
     userdrawnprofiledlg.cpp \
     utils.cpp \
+    videostreamworker.cpp \
     vortexdebug.cpp \
     wavefront.cpp \
     wavefrontaveragefilterdlg.cpp \
@@ -293,9 +299,8 @@ HEADERS += bezier/bezier.h \
     cameracalibwizard.h \
     camwizardpage1.h \
     ccswappeddlg.h \
-    circle.h \
+    circlefit.h \
     circleoutline.h \
-    circleutils.h \
     cnpy/cnpy.h \
     colorchannel.h \
     colorchanneldisplay.h \
@@ -306,6 +311,7 @@ HEADERS += bezier/bezier.h \
     contourview.h \
     counterrotationdlg.h \
     cpoint.h \
+    custom3dinputhandler.h \
     defocusdlg.h \
     dftarea.h \
     dftcolormap.h \
@@ -324,6 +330,9 @@ HEADERS += bezier/bezier.h \
     intensityplot.h \
     jitteroutlinedlg.h \
     lensetablemodel.h \
+    liveimageview.h \
+    liveviewdialog.h \
+    liveviewhistory.h \
     mainwindow.h \
     messagereceiver.h \
     metricsdisplay.h \
@@ -386,6 +395,7 @@ HEADERS += bezier/bezier.h \
     usercolormapdlg.h \
     userdrawnprofiledlg.h \
     utils.h \
+    videostreamworker.h \
     vortexdebug.h \
     wavefront.h \
     wavefrontaveragefilterdlg.h \
@@ -560,8 +570,5 @@ DISTFILES += buildingDFTFringe64.txt \
     COPYING.LESSER.txt \
     COPYING.txt \
     README.md \
-    RevisionHistory.html
-
-
-
-
+    RevisionHistory.html \
+    liveViewHelp.md

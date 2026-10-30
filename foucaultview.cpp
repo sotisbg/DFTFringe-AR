@@ -288,7 +288,7 @@ bool foucaultView::isAutocollimating() const{
 }
 void foucaultView::saveRonchiImage(){
     const QPixmap pm = ui->ronchiViewLb->pixmap(Qt::ReturnByValue);
-    pm.save(getSaveFileName("foucault"));
+    pm.save(getSaveFileName("ronchi"));
 
 }
 void foucaultView::saveFoucaultImage(){

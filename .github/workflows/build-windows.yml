@@ -24,7 +24,7 @@ jobs:
       # this will restore/cache everything in /Tools depending on cache hit/miss
       - name: Cache minGW
         id: cache-minGW
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: Tools
           key: ${{ runner.os }}-mingw${{env.mingw_version}}_64
@@ -32,7 +32,7 @@ jobs:
       # all what follows is only run on cache miss
       - name: install newer python
         if: steps.cache-minGW.outputs.cache-hit != 'true'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: ${{env.python_version}}
       - name: install aqtinstall tool
@@ -53,7 +53,7 @@ jobs:
     steps:
       # this will restore/cache everything depending on cache hit/miss
       - name: Cache QT and openCV
-        uses: actions/cache/@v4
+        uses: actions/cache@v6
         id: cache-openCV-QT
         with:
           path: |
@@ -72,7 +72,7 @@ jobs:
       # all what follows is only run on cache miss
 
       # restore cached minGW
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@v6
         if: steps.cache-openCV-QT.outputs.cache-hit != 'true'
         id: cache-minGW
         with:
@@ -81,7 +81,7 @@ jobs:
           fail-on-cache-miss: true
       - name: install newer python
         if: steps.cache-openCV-QT.outputs.cache-hit != 'true'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: ${{env.python_version}}
       - name: add minGW to path
@@ -94,7 +94,7 @@ jobs:
       - name: install QT
         if: steps.cache-openCV-QT.outputs.cache-hit != 'true'
         run: aqt install-qt windows desktop ${{env.QT_version}} win64_mingw -m qtcharts qtdatavis3d
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         if: steps.cache-openCV-QT.outputs.cache-hit != 'true'
         with:
           repository: 'opencv/opencv'
@@ -119,7 +119,7 @@ jobs:
     steps:
       # this will restore/cache everything depending on cache hit/miss
       - name: cache QWT
-        uses: actions/cache/@v4
+        uses: actions/cache@v6
         id: cache-QWT
         with:
           path: |
@@ -130,7 +130,7 @@ jobs:
       # all what follows is only run on cache miss
 
       # restore cached minGW
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@v6
         if: steps.cache-QWT.outputs.cache-hit != 'true'
         id: cache-minGW
         with:
@@ -153,7 +153,7 @@ jobs:
         run: 7z x qwt-${{env.QWT_version}}.zip
       - name: install newer python
         if: steps.cache-QWT.outputs.cache-hit != 'true'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: ${{env.python_version}}
       - name: install aqtinstall tool
@@ -176,7 +176,7 @@ jobs:
       # this will restore/cache everything depending on cache hit/miss
       - name: Cache lapack build
         id: cache-lapack
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             build_lapack\bin\liblapack.dll
@@ -187,7 +187,7 @@ jobs:
       # all what follows is only run on cache miss
 
       # restore cached minGW
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@v6
         if: steps.cache-lapack.outputs.cache-hit != 'true'
         id: cache-minGW
         with:
@@ -198,7 +198,7 @@ jobs:
         if: steps.cache-lapack.outputs.cache-hit != 'true'
         shell: bash
         run: echo "${{github.workspace}}\Tools\mingw${{env.mingw_version}}_64\bin" >> $GITHUB_PATH
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         if: steps.cache-lapack.outputs.cache-hit != 'true'
         with:
           repository: 'Reference-LAPACK/lapack'
@@ -294,7 +294,7 @@ jobs:
       # Match will be done in build folder, and file at root will be used to link the match
       # Note checkouting twice is not working.
       # This copy is done before adding any more file into folders
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       #  with:
       #    path: 'DFTFringe'
 
@@ -306,7 +306,7 @@ jobs:
 
 
       # restore cached minGW
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@v6
         id: cache-minGW
         with:
           path: Tools
@@ -316,7 +316,7 @@ jobs:
         shell: bash
         run: echo "${{github.workspace}}\Tools\mingw${{env.mingw_version}}_64\bin" >> $GITHUB_PATH
       # restore cached lapack and armadillo
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@v6
         id: cache-lapack
         with:
           path: |
@@ -326,7 +326,7 @@ jobs:
           key: ${{ runner.os }}-lapack-${{env.lapack_version}}-armadillo-${{env.armadillo_version}}-mingw${{env.mingw_version}}
           fail-on-cache-miss: true
       # restore cached QWT
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@v6
         id: cache-QWT
         with:
           path: |
@@ -344,7 +344,7 @@ jobs:
           key: ${{ runner.os }}-libraw-${{env.libraw_version}}-mingw${{env.mingw_version}}
           fail-on-cache-miss: true
       # restore cached openCV and QT
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@v6
         id: cache-openCV-QT
         with:
           path: |
@@ -419,6 +419,7 @@ jobs:
           Copy-Item ".\build_openCV\install\x64\mingw\bin\libopencv_highgui4120.dll" -Destination ".\DFTFringe\DFTFringeInstaller\packages\com.githubdoe.DFTFringe\data"
           Copy-Item ".\build_openCV\install\x64\mingw\bin\libopencv_imgcodecs4120.dll" -Destination ".\DFTFringe\DFTFringeInstaller\packages\com.githubdoe.DFTFringe\data"
           Copy-Item ".\build_openCV\install\x64\mingw\bin\libopencv_imgproc4120.dll" -Destination ".\DFTFringe\DFTFringeInstaller\packages\com.githubdoe.DFTFringe\data"
+          Copy-Item ".\build_openCV\install\x64\mingw\bin\libopencv_videoio4120.dll" -Destination ".\DFTFringe\DFTFringeInstaller\packages\com.githubdoe.DFTFringe\data"
           Copy-Item ".\qwt-${{env.QWT_version}}\lib\qwt.dll" -Destination ".\DFTFringe\DFTFringeInstaller\packages\com.githubdoe.DFTFringe\data"
           Copy-Item ".\${{env.QT_version}}\mingw_64\bin\Qt6OpenGL.dll" -Destination ".\DFTFringe\DFTFringeInstaller\packages\com.githubdoe.DFTFringe\data"
           Copy-Item ".\tools\mingw${{env.mingw_version}}_64\bin\libgfortran-5.dll" -Destination ".\DFTFringe\DFTFringeInstaller\packages\com.githubdoe.DFTFringe\data"
@@ -435,15 +436,15 @@ jobs:
         run: .\${{env.QT_version}}\mingw_64\bin\windeployqt.exe DFTFringe\DFTFringeInstaller\packages\com.githubdoe.DFTFringe\data\DFTFringe.exe
 
       - name: make installer using QT installer framework
-        run: Tools\QtInstallerFramework\4.7\bin\binarycreator.exe -c DFTFringe\DFTFringeInstaller\config\config.xml -p DFTFringe\DFTFringeInstaller\packages DFTFringeInstaller_${{env.WORKFLOW_VERSION}}
+        run: Tools\QtInstallerFramework\4.7\bin\binarycreator.exe -c DFTFringe\DFTFringeInstaller\config\config.xml -p DFTFringe\DFTFringeInstaller\packages DFTFringe-${{env.WORKFLOW_VERSION}}-Windows
 
       - name: Upload Artifact
         id: upload_artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: DFTFringe-windows-build-artifact
           path: |
-            DFTFringeInstaller_${{env.WORKFLOW_VERSION}}.exe
+            DFTFringe-${{env.WORKFLOW_VERSION}}-Windows.exe
             Z_DFTFringe.exe.debug
 
       - name: Get short SHA
@@ -455,7 +456,7 @@ jobs:
 
       - name: Comment PR with artifact link
         if: github.event_name == 'pull_request'
-        uses: peter-evans/create-or-update-comment@v4
+        uses: peter-evans/create-or-update-comment@v5
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           issue-number: ${{ github.event.pull_request.number }}

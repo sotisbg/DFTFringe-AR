@@ -24,6 +24,7 @@
 #include <QShortcut>
 #include <QtAlgorithms>
 #include <QLineEdit>
+#include <QSignalBlocker>
 #include "mirrordlg.h"
 #include <QMessageBox>
 surfaceAnalysisTools *surfaceAnalysisTools::m_Instance = NULL;
@@ -60,7 +61,6 @@ surfaceAnalysisTools::surfaceAnalysisTools(QWidget *parent) :
 }
 
 void surfaceAnalysisTools::enableControls(bool flag){
-
     setEnabled(flag);
 }
 
@@ -68,6 +68,19 @@ void surfaceAnalysisTools::enableControls(bool flag){
 void surfaceAnalysisTools::setBlurText(const QString &txt){
     ui->blurMm->setText(txt);
 }
+
+void surfaceAnalysisTools::setGaussianControls(bool enabled, double value){
+    const QSignalBlocker blurToggleBlocker(ui->blurCB);
+    const QSignalBlocker blurValueBlocker(ui->surfaceSmoothGausianBlurr);
+    ui->blurCB->setChecked(enabled);
+    ui->surfaceSmoothGausianBlurr->setValue(value);
+    ui->surfaceSmoothGausianBlurr->setEnabled(enabled);
+}
+
+void surfaceAnalysisTools::setGaussianStateText(const QString & str){
+    ui->lblGaussState->setText(str);
+}
+
 
 void surfaceAnalysisTools::addWaveFront(const QString &name){
 
@@ -358,4 +371,15 @@ void surfaceAnalysisTools::closeDefocus(int /*result*/){
 }
 
 
+void surfaceAnalysisTools::deleteLast(){
+    if (ui->wavefrontList->count() > 0) {
+        // Calculate the index of the last item
+        int lastRow = ui->wavefrontList->count() - 1;
 
+        // Remove the item from the widget (returns a pointer to the item)
+        QListWidgetItem *item = ui->wavefrontList->takeItem(lastRow);
+
+        // Explicitly delete the item to prevent memory leaks
+        delete item;
+    }
+}

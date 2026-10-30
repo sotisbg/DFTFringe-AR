@@ -77,6 +77,9 @@ public:
     void initWaveFrontLoad();
     void averageWavefrontFiles(const QStringList &files);
     void downSizeWf(wavefront *wf);
+    void updateBlurText();
+    double getGaussBlurOfSelectedWavefronts();
+
     void process(int wavefront_index, SurfaceManager *sm);
     wavefront *readWaveFront(const QString &fileName);
     inline wavefront *getCurrent(){
@@ -103,10 +106,9 @@ public:
     wavefront* m_standRemoved;
     int insideOffset;
     int outsideOffset;
-    int messageResult;
     void inspectWavefront();
 
-    cv::Mat_<double> subtractPlane(cv::Mat_<double> phase, cv::Mat_<bool> mask);
+    cv::Mat_<double> subtractPlane(cv::Mat_<double> phase, cv::Mat_<uint8_t> mask);
 
     void average(QList<wavefront *> wfList);
     void subtractWavefronts();
@@ -118,7 +120,6 @@ public:
     configRESPONSE rocResp;
     configRESPONSE lambdResp;
     int okToContinue;
-    bool okToUpdateSurfacesOnGenerateComplete;
     void makeMask(wavefront* wf, bool useInsideCircle = true);
     void generateSurfacefromWavefront(int ndx);
     void generateSurfacefromWavefront(wavefront *wf);
@@ -131,7 +132,6 @@ private:
     QPointer<standAstigWizard> m_standAstigWizard;
     int workToDo;
     int workProgress;
-
     wftStats *m_wftStats;
 
     explicit SurfaceManager(QObject *parent=0, surfaceAnalysisTools *tools = 0, ProfilePlot *profilePlot =0,
@@ -176,7 +176,7 @@ private slots:
 
 public slots:
     void rotateThese(double angle, QList<int> list);
-    void createSurfaceFromPhaseMap(cv::Mat phase, CircleOutline outside,
+    void createWaveFrontFromPhaseMap(cv::Mat phase, CircleOutline outside,
                                    CircleOutline center, const QString &name, WavefrontOrigin origin,
                                    QVector<std::vector<cv::Point> > polyArea= QVector<std::vector<cv::Point> >());
     void invert(QList<int> list);

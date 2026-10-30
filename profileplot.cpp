@@ -331,6 +331,9 @@ void ProfilePlot::setSurface(wavefront * wf){
     m_waveFrontyOffsets.clear();
     populate();
     m_plot->replot();
+    // Re-emit the current angle so contour view redraws its dashed profile line
+    // after selecting a different wavefront.
+    emit profileAngleChanged(M_PI_2 - g_angle);
 }
 
 void ProfilePlot::setDefocusWaveFront( const cv::Mat_<double> &wf){
@@ -350,6 +353,7 @@ void ProfilePlot::setDefocusValue(double val){
 QPolygonF ProfilePlot::createAverageProfile(double /*umnits*/, wavefront * /*wf*/, bool /*removeNull = false*/){
     surfaceAnalysisTools *saTools = surfaceAnalysisTools::get_Instance();
     QList<int> list = saTools->SelectedWaveFronts();
+    const double baselineAngle = g_angle;
     QPolygonF avg;
     for (int indx = 0; indx < list.size(); ++indx){
 
@@ -381,6 +385,7 @@ QPolygonF ProfilePlot::createAverageProfile(double /*umnits*/, wavefront * /*wf*
             }
 
         }
+        g_angle = startAngle;
 
         // plot the average profile
         int i = 0;
@@ -406,6 +411,8 @@ QPolygonF ProfilePlot::createAverageProfile(double /*umnits*/, wavefront * /*wf*
 //        }
 //        avg = avg2;
 //    }
+
+    g_angle = baselineAngle;
 
     return avg;
 }
@@ -444,9 +451,9 @@ QPolygonF ProfilePlot::createProfile(double units, const wavefront *wf, bool all
             e = md.m_verticalAxis / md.diameter;
         }
 
-        // Calculate matrix coordinates
-        int dx = radn * cos(g_angle + M_PI_2) + wf->m_outside.m_center.x();
-        int dy = -radn * e * sin(g_angle + M_PI_2) + wf->m_outside.m_center.y();
+        // Round to the nearest pixel to avoid 1-pixel endpoint errors at cardinal angles.
+        int dx = qRound(radn * cos(g_angle + M_PI_2) + wf->m_outside.m_center.x());
+        int dy = qRound(-radn * e * sin(g_angle + M_PI_2) + wf->m_outside.m_center.y());
 
         // Boundary Check: Ignore points outside the matrix
         if (dy >= wf->data.rows || dx >= wf->data.cols || dy < 0 || dx < 0) {
@@ -464,7 +471,7 @@ QPolygonF ProfilePlot::createProfile(double units, const wavefront *wf, bool all
         }
 
         // Mask and Data Processing
-        if (wf->workMask.at<bool>(dy, dx)) {
+        if (wf->workMask.at<uint8_t>(dy, dx)) {
             double val = (units * (wf->workData(dy, dx)) * wf->lambda / outputLambda) + (offset * units);
 
             if (m_defocus_mode) {
@@ -626,6 +633,8 @@ void ProfilePlot::populate()
 
     m_plot->detachItems(QwtPlotItem::Rtti_PlotItem);
     compass->setGeometry(QRect(80,80,70,70));
+    // Use compass as the source of truth when rebuilding profiles.
+    g_angle = compass->value() * DEGTORAD;
     QString tmp("nanometers");
     if (m_showNm == 1.)
         tmp = QString("waves of %1 nm").arg(outputLambda, 6, 'f', 1);
@@ -647,12 +656,12 @@ void ProfilePlot::populate()
     if (m_wf == 0)
         return;
     QSettings settings;
-    double smoothing = settings.value("GBValue", 20).toInt();
     m_plot->detachItems(QwtPlotItem::Rtti_PlotTextLabel);
 
+    SurfaceManager *sm = SurfaceManager::get_instance();
+    double smoothing = sm->getGaussBlurOfSelectedWavefronts();
 
-
-    if (m_wf->m_outside.m_radius > 0 && settings.value("GBlur", false).toBool()){
+    if (smoothing > 0){
         double val = .01 * (m_wf->diameter) * smoothing;
         QString t = QString("Surface Smoothing diameter %1% of surface diameter %2 mm")
                         .arg(smoothing, 6, 'f', 2)
@@ -781,9 +790,10 @@ void ProfilePlot::populate()
                     cprofile->attach( m_plot );
                   }
               }
+              // Keep repeated redraws stable at the user-selected compass angle.
+              g_angle = startAngle;
             }
           if (m_showAvg){
-              qDebug() << "inside avg" << y_offset;
               QColor penColor = QColor(Settings2::m_profile->getColor(i%10));
               // plot the average profile
               std::vector<double> avgRadius = compute_average_radial_profile(wf->workData,
@@ -857,7 +867,7 @@ void ProfilePlot::populate()
     muY->setLabel( QString::fromLatin1( " 1/8 wave on wavefront" ) );
     muY->setLabelAlignment( Qt::AlignRight | Qt::AlignTop );
     muY->setLineStyle( QwtPlotMarker::HLine );
-    muY->setLinePen( Qt::red, 0, Qt::DashDotLine );
+    muY->setLinePen( Qt::red, 3, Qt::DashDotLine );
     muY->setYValue( 0.125 * mul );
     muY->attach( m_plot );
 
@@ -866,7 +876,7 @@ void ProfilePlot::populate()
     mlY->setLabel( QString::fromLatin1( " -1/8 wave on wavefront" ) );
     mlY->setLabelAlignment( Qt::AlignRight | Qt::AlignTop );
     mlY->setLineStyle( QwtPlotMarker::HLine );
-    mlY->setLinePen( Qt::red, 0, Qt::DashDotLine );
+    mlY->setLinePen( Qt::red, 3, Qt::DashDotLine );
     mlY->setYValue( -0.125 * mul );
     mlY->attach( m_plot );
 
@@ -971,7 +981,7 @@ void ProfilePlot::saveXscaleSettings(){
 }
 void ProfilePlot::toggleShow16(){
     m_show_16_diameters = !m_show_16_diameters;
-qDebug() << "show 16";
+
     populate();
     m_plot->replot();
 }
@@ -983,7 +993,7 @@ void ProfilePlot::toggleShowAvg(){
 }
 void ProfilePlot::toggleOneAngle(){
     m_show_oneAngle = !m_show_oneAngle;
-qDebug() << "show one";
+
     populate();
     m_plot->replot();
 }
@@ -1168,7 +1178,7 @@ void ProfilePlot::CreateWaveFrontFromAverage(){
     }
     cv::Mat result = createInterpolatedCircularSurface(avgRadius);
     SurfaceManager *sm = SurfaceManager::get_instance();
-    sm->createSurfaceFromPhaseMap(result,
+    sm->createWaveFrontFromPhaseMap(result,
                               m_wf->m_outside,
                               m_wf->m_inside,
                               QString(m_wf->name.replace(".wft","")  + "_avg"), WavefrontOrigin::Average);

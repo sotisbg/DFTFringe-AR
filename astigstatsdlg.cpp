@@ -1,7 +1,6 @@
 #include "astigstatsdlg.h"
 #include "ui_astigstatsdlg.h"
-#include "circleutils.h"
-#include "circle.h"
+#include "circlefit.h"
 #include <qwt_plot.h>
 #include <qwt_plot_curve.h>
 #include <qwt_plot_grid.h>
@@ -168,7 +167,7 @@ astigStatsDlg::astigStatsDlg(const QVector<wavefront *> &wavefronts, QWidget *pa
         Qt::RightButton );
 
     ui->mPlot->setPalette( Qt::white );
-qDebug() << "what the heck";
+
     //ui->bestFitCB->hide();
     plot();
 }
