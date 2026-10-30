@@ -1126,8 +1126,7 @@ bool IgramArea::openImage(const QString &fileName, bool showBoundary)
         QString rawErr;
         loadedImage = RawImage::load(fileName, &rawErr);
         if (loadedImage.isNull()){
-            QMessageBox::warning(NULL,"","RAW image "+fileName + " could not be read.
-" + rawErr);
+            QMessageBox::warning(NULL,"","RAW image "+fileName + " could not be read.\n" + rawErr);
             QApplication::restoreOverrideCursor();
             return false;
         }
