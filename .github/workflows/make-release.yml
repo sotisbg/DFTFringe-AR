@@ -1,3 +1,4 @@
+
 name: make-release
 
 on:
@@ -42,13 +43,13 @@ jobs:
     runs-on: ubuntu-latest
     needs: call-build-windows
     steps:
-      # get artifact uploaded from build workflow
-      - uses: actions/download-artifact@v4
+      # get artifacts uploaded from the build workflows
+      - uses: actions/download-artifact@v8
         with:
           name: DFTFringe-windows-build-artifact-QT5
       # create the GitHub release and upload the artifacts
       - name: publish Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v3
         with:
           body: |
             - edit this changelog

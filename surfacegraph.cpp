@@ -36,17 +36,24 @@
 #include <QLabel>
 #include <QSettings>
 #include <QDebug>
-
+#include "custom3dinputhandler.h"
 int sampleCountX = 50;
 int sampleCountZ = 50;
 
 const float sampleMin = -8.0f;
 const float sampleMax = 8.0f;
 #include <QOpenGLFunctions>
+
+
+
+
 SurfaceGraph::SurfaceGraph(Q3DSurface *surface)
     : m_graph(surface),m_axisMaxSliderXValue(100),m_axisMinSliderXValue(0), m_wf(0), m_colorRange(.56)
 {
     m_xGridMin = 0;
+    // Replace default input handler with your custom one
+    Custom3DInputHandler *customInputHandler = new Custom3DInputHandler(m_graph);
+    m_graph->setActiveInputHandler(customInputHandler);
     m_graph->setAxisX(new QValue3DAxis);
     m_graph->setAxisY(new QValue3DAxis);
     m_graph->setAxisZ(new QValue3DAxis);
@@ -334,7 +341,7 @@ void SurfaceGraph::yOffsetChanged(int val){
 void SurfaceGraph::scaleY(int d){
 
     m_yGridHeight = maxHeightSelections[d];
-    qDebug() << "yscale" << m_yGridHeight <<  m_gradientScale << d;
+
     m_graph->axisY()->setRange(0.0f, m_yGridHeight);
     setSurface(m_wf);
 }
@@ -387,7 +394,7 @@ void SurfaceGraph::adjustXMin(int min)
 //        m_axisMaxSliderX->setValue(max);
 //    }
 
-qDebug() << "range" << minX << maxX;
+
     m_graph->axisX()->setRange(minX, maxX);
 }
 
@@ -484,12 +491,6 @@ QSize SurfaceGraph::Size(){
     return  m_graph->size();
 }
 QImage SurfaceGraph::render(int width, int height){
-    QSize orgsize = m_graph->size();
-    if (orgsize.width() < width){
-        qDebug() << "m_graph size" << orgsize << width << height;
-        m_graph->resize(width, height);
-    }
-    QImage result = m_graph->renderToImage(0, QSize(width,height));
-    m_graph->resize(orgsize);
-    return result;
+    // Render directly at the widget's current display size without resizing the live view
+    return m_graph->renderToImage(0, m_graph->size());
 }

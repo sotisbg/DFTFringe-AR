@@ -32,15 +32,14 @@ enum class WavefrontOrigin : std::uint8_t {
     Zernikes,
     Smoothed
 };
-class wavefront
-{
-public:
+class wavefront { public:
     wavefront();
-    ~wavefront();
-    wavefront( const wavefront &wf); // copy constructor doing deep copy of cv::Mat
-    wavefront( wavefront && ) = delete;	// move constructor, deleted because unused
-    wavefront& operator=( const wavefront & ) = default; // copy operator not doing deep copy of cv::mat
-    wavefront& operator=(wavefront &&) = delete; // move operator, deleted because unused
+    ~wavefront() = default;
+    wavefront( const wavefront &wf);
+    wavefront( wavefront && );
+    wavefront& operator=( const wavefront & ) = default;
+    wavefront& operator=(wavefront &&) = default;
+    void cloneMatricesFrom(const wavefront &wf);
 
     cv::Mat_<double> data;
     cv::Mat_<double> nulledData;
@@ -48,17 +47,19 @@ public:
     cv::Mat_<double> workData;
     cv::Mat_<uint8_t> workMask;
     std::vector<double> InputZerns;
-    double gaussian_diameter;
-    bool wasSmoothed;
-    bool useSANull;
-    double GBSmoothingValue;
-    WavefrontOrigin m_origin;
-    bool m_manuallyInverted; // true if user inverted this wavefront
 
+    QVector<std::vector<cv::Point> > regions;
+
+    std::vector<bool> zernEnablesApplied;
+
+    double gaussian_diameter;
+                  CircleOutline m_outside;
+                  CircleOutline m_inside;
+    double GBSmoothingValue;
+    double gbValue;
+    WavefrontOrigin m_origin;
     QString name;
     double lambda;
-    CircleOutline m_outside;
-    CircleOutline m_inside;
     double diameter;
     double roc;
     double min;
@@ -66,10 +67,11 @@ public:
     double std;
     double mean;
     bool dirtyZerns;
-    QVector<std::vector<cv::Point> > regions;
     bool regions_have_been_expanded;
-
-
+    bool gbEnabled;
+    bool wasSmoothed;
+    bool useSANull;
+    bool m_manuallyInverted; // true if user inverted this wavefront
 };
 
 #endif // WAVEFRONT_H

@@ -66,8 +66,7 @@
 #include "foucaultview.h"
 #include "myutils.h"
 #include "contourview.h"
-#include "circleutils.h"
-#include "circle.h"
+#include "circlefit.h"
 #include "utils.h"
 #include "wavefrontfilterdlg.h"
 #include "reportdlg.h"
@@ -80,8 +79,6 @@
 #include "utils.h"
 #include "cnpy.h"
 
-cv::Mat theMask;
-cv::Mat deb;
 double outputLambda;
 double bilinear(cv::Mat mat, cv::Mat mask, double x, double y)
 {
@@ -347,19 +344,25 @@ void SurfaceManager::generateSurfacefromWavefront(int wavefrontNdx) {
 
     wavefront *wf = m_wavefronts[wavefrontNdx];
     generateSurfacefromWavefront(wf);
-
     surfaceGenFinished();
 }
 
 void SurfaceManager::generateSurfacefromWavefront(wavefront * wf){
     zernikeProcess &zp = *zernikeProcess::get_Instance();
+    if (wf->zernEnablesApplied.size() != zernEnables.size()) {
+        wf->zernEnablesApplied.resize(zernEnables.size(), true);
+    }
+    wf->zernEnablesApplied = zernEnables;
+    wf->gbEnabled = m_GB_enabled;
+    wf->gbValue = m_gbValue;
+
     if (wf->dirtyZerns){
         if (mirrorDlg::get_Instance()->isEllipse()){
             wf->nulledData = wf->data.clone();
-            if (m_GB_enabled){
+            if (wf->gbEnabled){
 
                 // compute blur radius
-                int gaussianRad = 2 * wf->m_outside.m_radius * m_gbValue * .01;
+                int gaussianRad = 2 * wf->m_outside.m_radius * wf->gbValue * .01;
                 gaussianRad &= 0xfffffffe;
 
                 ++gaussianRad;
@@ -377,7 +380,6 @@ void SurfaceManager::generateSurfacefromWavefront(wavefront * wf){
 
             return;
         }
-
         //compute zernike values
 
         mirrorDlg *md = mirrorDlg::get_Instance();
@@ -427,15 +429,13 @@ void SurfaceManager::generateSurfacefromWavefront(wavefront * wf){
 		// AUTO INVERT CODE ENDS HERE/
 		//
 
+        ((MainWindow*)parent())-> zernTablemodel->setAppliedEnables(&wf->zernEnablesApplied);
         ((MainWindow*)parent())-> zernTablemodel->setValues(wf->InputZerns, !wf->useSANull);
         ((MainWindow*)parent())-> zernTablemodel->update();
         // fill in void from obstruction of igram.
         zp.fillVoid(*wf);
         makeMask(wf, true);
         // null out desired terms.
-        //cv::Mat tiltremoved = zp.null_unwrapped(*wf, wf->InputZerns, zernEnables, 0,3);
-        //wf->data = tiltremoved;
-        //zp.unwrap_to_zernikes(*wf);
         wf->nulledData = zp.null_unwrapped(*wf, wf->InputZerns, zernEnables,0,Z_TERMS   );
         wf->dirtyZerns = false;
     }
@@ -443,9 +443,9 @@ void SurfaceManager::generateSurfacefromWavefront(wavefront * wf){
     wf->workData = wf->nulledData.clone();
 
 
-    if (m_GB_enabled){
+        if (wf->gbEnabled){
             // compute blur radius
-            int gaussianRad = 2 * wf->m_outside.m_radius * m_gbValue * .01;
+            int gaussianRad = 2 * wf->m_outside.m_radius * wf->gbValue * .01;
 
             gaussianRad &= 0xfffffffe;
             ++gaussianRad;
@@ -465,10 +465,14 @@ void SurfaceManager::generateSurfacefromWavefront(wavefront * wf){
     wf->nulledData.release();
 }
 cv::Mat SurfaceManager::computeWaveFrontFromZernikes(int wx, int wy, std::vector<double> &zerns, QVector<int> zernsToUse){
-    double rad = getCurrent()->m_outside.m_radius;
-    double xcen = (wx-1)/2, ycen = (wy-1)/2;
-
+    wavefront *currentWf = getCurrent();
     cv::Mat result = cv::Mat::zeros(wy,wx, numType);
+    if (currentWf == nullptr) {
+        return result;
+    }
+
+    double rad = currentWf->m_outside.m_radius;
+    double xcen = (wx-1)/2, ycen = (wy-1)/2;
 
     double rho;
 
@@ -477,9 +481,7 @@ cv::Mat SurfaceManager::computeWaveFrontFromZernikes(int wx, int wy, std::vector
         if (value > maxZernToUse)
             maxZernToUse = value;
     }
-
-
-    std::vector<bool> &en = zernEnables;
+    std::vector<bool> &en = (currentWf->zernEnablesApplied.empty()) ? zernEnables : currentWf->zernEnablesApplied;
     mirrorDlg *md = mirrorDlg::get_Instance();
     for (int i = 0; i <  wx; ++i)
     {
@@ -542,7 +544,6 @@ SurfaceManager::SurfaceManager(QObject *parent, surfaceAnalysisTools *tools,
     m_inverseMode(invNOTSET),m_ignoreInverse(false), m_standAstigWizard(nullptr), workToDo(0), m_wftStats(0)
 {
 
-    okToUpdateSurfacesOnGenerateComplete = true;
     m_simView = SimulationsView::getInstance(0);
 
     pd = new QProgressDialog();
@@ -640,22 +641,22 @@ void SurfaceManager::makeMask(wavefront *wf, bool useInsideCircle){
     ym = wf->m_outside.m_center.y();
     double radm =wf->m_outside.m_radius + outsideOffset-2;
     double rado = wf->m_inside.m_radius + insideOffset;
-    if (rado > 0)
-        rado += (insideOffset + 1);
+    if(rado > 0){
+        rado += 1;
+    }
 
-    double cx = wf->m_inside.m_center.x();
-    double cy = wf->m_inside.m_center.y();
     cv::Mat mask = cv::Mat::zeros(height,width,CV_8U);
     mirrorDlg &md = *mirrorDlg::get_Instance();
-    double rx = radm;
-    double rx2 = rx * rx;
-    double ry = rx * md.m_verticalAxis/md.diameter;
-    double ry2 = ry * ry;
+
     if (!mirrorDlg::get_Instance()->isEllipse()){
         uchar v = 0xff;
         fillCircle(mask, xm,ym,radm, &v);
     }
     else {
+        double rx = radm;
+        double rx2 = rx * rx;
+        double ry = rx * md.m_verticalAxis/md.diameter;
+        double ry2 = ry * ry;
         for (int y = 0; y < height; ++y){
             for (int x = 0; x < width; ++x){
 
@@ -670,7 +671,15 @@ void SurfaceManager::makeMask(wavefront *wf, bool useInsideCircle){
 
     if (rado > 0 && useInsideCircle) {
         uchar color = 0;
-        fillCircle(mask, cx,cy,rado, &color);
+        if(wf->m_inside.isValid()){
+            double cx = wf->m_inside.m_center.x();
+            double cy = wf->m_inside.m_center.y();
+            fillCircle(mask, cx, cy, rado, &color);
+        }
+        else{
+            // inside circle is not always defined. So we use outside circle coordinates.
+            fillCircle(mask, xm, ym, rado, &color);
+        }
     }
 
     // expand the region by 10%
@@ -716,7 +725,6 @@ void SurfaceManager::makeMask(wavefront *wf, bool useInsideCircle){
     //line(wf->workMask, Point(s/2, 0), Point(s/2,s),cv::Scalar(0,0,0), 10);
    // line(wf->workMask, Point(0, s/2), Point(s,s/2),cv::Scalar(0,0,0), 10);
     //line(wf->workMask, Point(0, 0), Point(s,s),cv::Scalar(0,0,0), 10);
-    theMask = mask.clone();
 
 
     // add central obstruction (not to be confused with a hole in the mirror - this comes from mirror configuration)
@@ -738,6 +746,7 @@ void SurfaceManager::wftNameChanged(int ndx, const QString &name){
 }
 
 void SurfaceManager::sendSurface(wavefront* wf){
+//qDebug() << "sending surface" << wf->name;
     emit currentNdxChanged(m_currentNdx);
     computeMetrics(wf);
 
@@ -746,6 +755,7 @@ void SurfaceManager::sendSurface(wavefront* wf){
     m_SurfaceGraph->setSurface(wf);
     m_simView->setSurface(wf);
     foucaultView::get_Instance()->setSurface(wf);
+    updateBlurText();
 
     QFile fn(wf->name);
     QFileInfo fileInfo(fn.fileName());
@@ -759,10 +769,10 @@ void SurfaceManager::ObstructionChanged(){
 
 void SurfaceManager::centerMaskValue(int val){
     insideOffset = val;
-    double mmPerPixel = getCurrent()->diameter/(2 *( m_wavefronts[m_currentNdx]->m_outside.m_radius-1));
-    m_surfaceTools->m_centerMaskLabel->setText(QString("%1 mm").arg(mmPerPixel* val, 6, 'f', 2));
-    makeMask(m_currentNdx);
     wavefront *wf = m_wavefronts[m_currentNdx];
+    double mmPerPixel = wf->diameter/(2 *(wf->m_outside.m_radius-1));
+    m_surfaceTools->m_centerMaskLabel->setText(QString("%1 mm").arg(mmPerPixel* val, 6, 'f', 2));
+    makeMask(wf);
     wf->dirtyZerns = true;
     wf->wasSmoothed = false;
     //emit generateSurfacefromWavefront(m_currentNdx, this);
@@ -772,10 +782,10 @@ void SurfaceManager::centerMaskValue(int val){
 
 void SurfaceManager::outsideMaskValue(int val){
     outsideOffset = val;
-    double mmPerPixel = m_wavefronts[m_currentNdx]->diameter/(2 * (m_wavefronts[m_currentNdx]->m_outside.m_radius));
-    m_surfaceTools->m_edgeMaskLabel->setText(QString("%1 mm").arg(mmPerPixel* val, 6, 'f', 2));
-    makeMask(m_currentNdx);
     wavefront *wf = m_wavefronts[m_currentNdx];
+    double mmPerPixel = wf->diameter/(2 * (wf->m_outside.m_radius));
+    m_surfaceTools->m_edgeMaskLabel->setText(QString("%1 mm").arg(mmPerPixel* val, 6, 'f', 2));
+    makeMask(wf);
     wf->dirtyZerns = true;
     wf->wasSmoothed = false;
     //emit generateSurfacefromWavefront(m_currentNdx, this);
@@ -816,7 +826,7 @@ void SurfaceManager::useDemoWaveFront(){
 
 
 
-    createSurfaceFromPhaseMap(result,
+    createWaveFrontFromPhaseMap(result,
                               CircleOutline(QPointF(xcen,ycen),rad),
                               CircleOutline(QPointF(0,0),0),
                               QString("Demo"), WavefrontOrigin::Demo);
@@ -851,11 +861,50 @@ void SurfaceManager::wavefrontDClicked(const QString & name){
     }
 }
 
+double SurfaceManager::getGaussBlurOfSelectedWavefronts(){
+    // returns:
+    // blur value if all selected wavefronts are the same blur value
+    // 0 if all wavefronts have gauss blur disabled
+    // -1 different wavefronts have different amounts of blur
+    // -2 if nothing selected
+    QList<int> doThese =  m_surfaceTools->SelectedWaveFronts();
+    double blur = -2;
+    foreach(int ndx , doThese){
+        wavefront * wf = m_wavefronts[ndx];
+        double val = (wf->gbEnabled ? wf->gbValue : 0);
+        if (blur < 0) {
+            blur = val;
+            continue;
+        }
+        if (blur != val)
+            return -1;
+    }
+    return blur;
+}
+
+void SurfaceManager::updateBlurText(){
+    if (m_surfaceTools == nullptr)
+        return;
+
+    double blur = getGaussBlurOfSelectedWavefronts();
+    if (blur == -2) // nothing selected
+        m_surfaceTools->setGaussianStateText("");
+    else if (blur == -1) // mixed
+        m_surfaceTools->setGaussianStateText("Multiple Blur Amounts");
+    else if (blur == 0) // Gaussian blur disabled
+        m_surfaceTools->setGaussianStateText("Currently No Blurring");
+    else
+        m_surfaceTools->setGaussianStateText("Current Gaussian Blur "+QString("%1").arg(blur, 5, 'f', 1)+" %");
+}
+
 void SurfaceManager::surfaceSmoothGBValue(double value){
 
     QSettings settings;
     settings.setValue("GBValue", (int)(value));
     m_gbValue = value;
+    if (m_wavefronts.size() > 0) {
+        m_wavefronts[m_currentNdx]->gbValue = value;
+    }
     mirrorDlg *md = mirrorDlg::get_Instance();
 
     m_surfaceTools->setBlurText(QString("%1 mm").arg( .01 * value * md->diameter, 6, 'f', 2));
@@ -871,6 +920,9 @@ void SurfaceManager::surfaceSmoothGBValue(double value){
 void SurfaceManager::surfaceSmoothGBEnabled(bool b){
 
     m_GB_enabled = b;
+    if (m_wavefronts.size() > 0) {
+        m_wavefronts[m_currentNdx]->gbEnabled = b;
+    }
 
     QSettings settings;
     settings.setValue("GBlur", m_GB_enabled);
@@ -902,6 +954,21 @@ void SurfaceManager::computeMetrics(wavefront *wf){
 
     wf->min = mmin * md->lambda/outputLambda;
     wf->max = mmax * md->lambda/outputLambda;
+
+    // let zernTableModel know state of currently selected wavefronts zernike state (which were checked/unchecked/both)
+    QList<int> doThese =  m_surfaceTools->SelectedWaveFronts();
+    bool bFirst=true;
+    foreach(int ndx , doThese){
+        wavefront * each_wf = m_wavefronts[ndx];
+        if (bFirst) {
+            ((MainWindow*)parent())->zernTablemodel->setAppliedEnables(&each_wf->zernEnablesApplied);
+            bFirst = false;
+        } else {
+            ((MainWindow*)parent())->zernTablemodel->addAppliedEnables(&each_wf->zernEnablesApplied);
+        }
+    }
+
+
 
 
     ((MainWindow*)(parent()))->zernTablemodel->setValues(wf->InputZerns, !wf->useSANull);
@@ -1073,7 +1140,7 @@ void SurfaceManager::SaveWavefronts(bool saveNulled){
     }
     QApplication::restoreOverrideCursor();
 }
-void SurfaceManager::createSurfaceFromPhaseMap(cv::Mat phase, CircleOutline outside,
+void SurfaceManager::createWaveFrontFromPhaseMap(cv::Mat phase, CircleOutline outside,
                                                CircleOutline center,
                                                const QString &name, WavefrontOrigin origin,
                                                QVector<std::vector<cv::Point> > polyArea){
@@ -1123,15 +1190,19 @@ void SurfaceManager::createSurfaceFromPhaseMap(cv::Mat phase, CircleOutline outs
     wf->diameter = md->diameter;
     wf->lambda = md->lambda;
     wf->roc = md->roc;
+    wf->zernEnablesApplied = zernEnables;
+    wf->gbEnabled = m_GB_enabled;
+    wf->gbValue = m_gbValue;
     wf->dirtyZerns = true;
     wf->wasSmoothed = false;
     wf->regions = polyArea;
     m_currentNdx = m_wavefronts.size()-1;
 
     makeMask(m_currentNdx);
-
+    //qDebug() << "surface manager create wave front from phasee map calling generate surface from wave front";
     generateSurfacefromWavefront(m_currentNdx);
-    loadComplete();
+
+    //loadComplete();
     m_surfaceTools->select(m_currentNdx);
     emit showTab(2);
 }
@@ -1327,8 +1398,8 @@ wavefront * SurfaceManager::readWaveFront(const QString &fileName){
     }
     wf->m_inside = CircleOutline(QPointF(xo,yo), rado);
 
-
     if (lambda != md->lambda){
+        int resp = QMessageBox::No;
         if (lambdResp == ASK){
             QString message("The interferogram wavelength (");
             message += QString("%1").arg( lambda, 6, 'f', 3) +
@@ -1336,7 +1407,7 @@ wavefront * SurfaceManager::readWaveFront(const QString &fileName){
                     "Do you want to make the config match?";
 
 
-            int resp = QMessageBox(QMessageBox::Information,"config",message,QMessageBox::Yes|QMessageBox::No |
+            resp = QMessageBox(QMessageBox::Information,"config",message,QMessageBox::Yes|QMessageBox::No |
                                  QMessageBox::YesToAll | QMessageBox::NoToAll).exec();
 
             switch (resp){
@@ -1349,7 +1420,7 @@ wavefront * SurfaceManager::readWaveFront(const QString &fileName){
             }
         }
 
-        if ( lambdResp == YES || messageResult == QMessageBox::Yes){
+        if ( lambdResp == YES || resp == QMessageBox::Yes){
             md->newLambda(QString::number(lambda));
         }
     }
@@ -1360,8 +1431,9 @@ wavefront * SurfaceManager::readWaveFront(const QString &fileName){
         message += QString("%1").arg(diam, 6, 'f', 3) +
                 ") Of the wavefront does not match the config value of " + QString("%1\n").arg(md->diameter, 6, 'f', 3) +
                 "Do you want to make the config match?";
+        int resp = QMessageBox::No;
         if (diamResp == ASK){
-            int resp = QMessageBox(QMessageBox::Information,"config", message,QMessageBox::Yes|QMessageBox::No |
+            resp = QMessageBox(QMessageBox::Information,"config", message,QMessageBox::Yes|QMessageBox::No |
                                  QMessageBox::YesToAll | QMessageBox::NoToAll).exec();
 
             switch (resp){
@@ -1373,7 +1445,7 @@ wavefront * SurfaceManager::readWaveFront(const QString &fileName){
                 break;
             }
         }
-        if (diamResp == YES || messageResult == QMessageBox::Yes){
+        if (diamResp == YES || resp == QMessageBox::Yes){
             emit diameterChanged(diam);
         }
         else {
@@ -1389,8 +1461,9 @@ wavefront * SurfaceManager::readWaveFront(const QString &fileName){
                 ") Of the wavefront does not match the config value of " + QString("%1\n").arg(md->roc, 6, 'f', 3) +
                 "Do you want to make the config match?";
         //qDebug() << message;
+        int resp = QMessageBox::No;
         if (rocResp == ASK){
-            int resp = QMessageBox(QMessageBox::Information,"config",message,QMessageBox::Yes|QMessageBox::No |
+            resp = QMessageBox(QMessageBox::Information,"config",message,QMessageBox::Yes|QMessageBox::No |
                                  QMessageBox::YesToAll | QMessageBox::NoToAll).exec();
 
             switch (resp){
@@ -1402,7 +1475,7 @@ wavefront * SurfaceManager::readWaveFront(const QString &fileName){
                 break;
             }
         }
-        if (rocResp == YES || messageResult == QMessageBox::Yes){
+        if (rocResp == YES || resp == QMessageBox::Yes){
             emit rocChanged(roc);
         }
         else {
@@ -1410,9 +1483,19 @@ wavefront * SurfaceManager::readWaveFront(const QString &fileName){
 
         }
     }
+
+    if (md->isEllipse() && md->m_verticalAxis > md->diameter){
+        spdlog::get("logger")->info("Wavefront load ellipse axis clamp: vertical axis {} exceeded horizontal axis {}. Vertical axis was clamped to {}.",
+                                     md->m_verticalAxis, md->diameter, md->diameter);
+        md->setMinorAxis(md->diameter);
+    }
+
     wf->diameter = diam;
     wf->roc = roc;
     wf->lambda = lambda;
+    wf->zernEnablesApplied = zernEnables;
+    wf->gbEnabled = m_GB_enabled;
+    wf->gbValue = m_gbValue;
     wf->wasSmoothed = false;
 
     return wf;
@@ -1490,7 +1573,7 @@ void SurfaceManager::deleteCurrent(){
         if (m_currentNdx > 0)
             --m_currentNdx;
     }
-    showmem("After delete");
+
     if (m_wavefronts.length() > 0) {
 
         sendSurface(m_wavefronts[m_currentNdx]);
@@ -1567,6 +1650,7 @@ void SurfaceManager::saveAllWaveFrontStats(){
     if (m_wavefronts.size() == 0)
         return;
     statsView * sv = new statsView(this);
+    sv->setAttribute(Qt::WA_DeleteOnClose);
     sv->show();
     return;
 }
@@ -1584,22 +1668,22 @@ void SurfaceManager::surfaceGenFinished() {
         emit progress(++workProgress);
 
     m_surface_finished = true;
-    if (okToUpdateSurfacesOnGenerateComplete){
-        loadComplete();
-    }
+    loadComplete();
+
     if (workProgress == workToDo)
         workToDo = 0;
 
 }
 
 void SurfaceManager::loadComplete(){
+
     m_toolsEnableTimer->start(1000);
     if (m_wavefronts.size() > 0){
         sendSurface(m_wavefronts[m_currentNdx]);
         computeMetrics(m_wavefronts[m_currentNdx]);
     }
 }
-
+int cnt = 0;
 // Update all surfaces since some control has changed.  Skip current surface it has already been done
 void SurfaceManager::backGroundUpdate(){
 
@@ -1612,6 +1696,7 @@ void SurfaceManager::backGroundUpdate(){
     pd->setLabelText("Updating Selected Surfaces");
     pd->setRange(0,doThese.size());
     foreach (int i, doThese){
+        qDebug() << "updating these" << doThese << i << ++cnt;
         m_wavefronts[i]->dirtyZerns = true;
         m_wavefronts[i]->wasSmoothed = false;
         makeMask(i);
@@ -1621,11 +1706,12 @@ void SurfaceManager::backGroundUpdate(){
             zp.m_bDontProcessEvents=false;
         }
         catch (int i) {
+            qWarning() << "Exception caught in generateSurfacefromWavefront:" << i;
             break;
         }
     }
+qDebug() << "done with these";
     m_ignoreInverse = false;
-    loadComplete();
 }
 
 
@@ -2033,7 +2119,6 @@ void SurfaceManager::filter(){
 }
 
 #include "wftexaminer.h"
-wftExaminer *wex;
 double wrapAngle(double angle){
     if (angle < -360){
         angle += 360;
@@ -2043,7 +2128,12 @@ double wrapAngle(double angle){
     return angle;
 }
 void SurfaceManager::inspectWavefront(){
-    wex = new wftExaminer(m_wavefronts[m_currentNdx]);
+    wftExaminer *wex = new wftExaminer(m_wavefronts[m_currentNdx], nullptr);
+    wex->setAttribute(Qt::WA_DeleteOnClose);
+    if (parent()) {
+        QObject::connect(parent(), &QObject::destroyed, wex, &QWidget::close);
+    }
+    QObject::connect(qApp, &QCoreApplication::aboutToQuit, wex, &QWidget::close);
     wex->show();
 }
 
@@ -2364,6 +2454,7 @@ textres SurfaceManager::Phase2(QList<rotationDef *> list, QList<wavefront *> inp
         cp->m_zRangeMode = "Fractions of Wave";
         cp->contourWaveRangeChanged(inputs[0]->std* 3);
         wavefront * wf = new wavefront(*inputs[i]);
+        wf->cloneMatricesFrom(*inputs[i]);
 
 
         wf->data = wf->workData = standwfs[i];
@@ -2412,6 +2503,7 @@ textres SurfaceManager::Phase2(QList<rotationDef *> list, QList<wavefront *> inp
 
     //display average of all stand zernwavefronts
     wavefront * wf2 = new wavefront(*inputs[0]);
+    wf2->cloneMatricesFrom(*inputs[0]);
     wf2->data = wf2->workData = standavgZernMat ;
     cv::resize(inputs[0]->mask,wf2->mask, cv::Size(wf2->data.cols, wf2->data.rows));
     wf2->workMask = wf2->mask;
@@ -3276,8 +3368,8 @@ void SurfaceManager::showAllContours(){ //TODO move to contourview would make mo
     }
     QRect rec = QGuiApplication::primaryScreen()->geometry();
     QApplication::setOverrideCursor(Qt::WaitCursor);
-    ContourPlot *plot =new ContourPlot(0,0);//m_contourPlot; //TODO leaking ? 
-    //plot->m_minimal = true; 
+    ContourPlot *plot =new ContourPlot(0,0);//m_contourPlot; //TODO leaking ?
+    //plot->m_minimal = true;
     int cols = dlg.getColumns(); //TODO parameter number of pixels unused here. update the dlg ui
     int width = rec.width()/cols;
     int height = width * .82;
@@ -3457,7 +3549,10 @@ void SurfaceManager::report(){
         int half = Z_TERMS/2 +2;
         for (int i = 3; i < half; ++i){
             double val = wf->InputZerns[i];
-            bool enabled = zernEnables[i];
+            bool enabled = true;
+            if (static_cast<size_t>(i) < wf->zernEnablesApplied.size()) {
+                enabled = wf->zernEnablesApplied[i];
+            }
             if ( i == 3 && m_surfaceTools->m_useDefocus){
                 val = m_surfaceTools->m_defocus;
                 enabled = true;
@@ -3491,9 +3586,13 @@ void SurfaceManager::report(){
 
         for (int i = half; i < Z_TERMS; ++i){
             double val = wf->InputZerns[i];
+            bool enabled = true;
+            if (static_cast<size_t>(i) < wf->zernEnablesApplied.size()) {
+                enabled = wf->zernEnablesApplied[i];
+            }
             zerns.append("<tr><td>" + QString(zernsNames[i]) + "</td><td><table width = '100%'><tr><td>" + QString("%1</td><td>%2</td></tr></table>").arg(
                                                                                                                              val, 6, 'f', 3).arg(computeRMS(i,val), 6, 'f', 3) + "</td><td>" +
-                         QString((zernEnables[i]) ? QString("") : QString("Disabled")) + "</td></tr>");
+                         QString((enabled) ? QString("") : QString("Disabled")) + "</td></tr>");
         }
         zerns.append("</table></td></tr></table></p>");
 
@@ -3653,7 +3752,7 @@ void SurfaceManager::report(){
         doc->addResource(QTextDocument::ImageResource, QUrl(pixStat),
                          QVariant(pixStats.scaledToWidth(dlg.histoWidth * finalWidth,
                                                           Qt::SmoothTransformation)));
-        imagesHtml.append("<table  style=\"page-break-before:always\" border = \"1\"><tr><th>Pixel Histogram and SLope error</th></tr> <tr><td> <img src = '" +
+        imagesHtml.append("<table  style=\"page-break-before:always\" border = \"1\"><tr><th>Pixel Histogram and Slope error</th></tr> <tr><td> <img src = '" +
                            pixStat + "'></td></tr></table>");
     }
     editor->setHtml(title + html +zerns + imagesHtml +  tail);
@@ -3909,4 +4008,3 @@ void SurfaceManager::tiltAnalysis(){
    yTilt->attach(pl1);
    pl1->show();
 }
-
