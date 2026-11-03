@@ -3882,7 +3882,7 @@ void SurfaceManager::report(){
             "<table border='1' width = '100%'><tr><td>" + Diameter + " mm</td><td>" + ROC + " mm</td>"
             "<td>" +FNumber+ "</td></tr>"
             "<tr><td> RMS: " + QString().number(wf->std,'f',3) +
-                QString(" waves at %1 nm").arg(outputLambda, 6, 'f', 1) + "<br>PV: " + pvText + "</td><td>Strehl: " + metrics->mStrehl->text() +
+                QString(" waves at %1 nm").arg(outputLambda, 6, 'f', 1) + "<br>PV: " + pvText + "</td><td>Strehl: " + metrics->mStrehl->text() + "%STREHL_RANGE%" +
             "</td><td>" + BFC + "</td></tr>"
             "<tr><td>" + ((md->isEllipse()) ? "":"Desired Conic: " + QString::number(md->cc)) + "</td><td>" +
             ((md->doNull) ? QString("SANull: %1").arg(md->z8 * md->cc, 6, 'f', 4) : "No software Null") + "</td>"
@@ -3893,6 +3893,7 @@ void SurfaceManager::report(){
     // rotation average, worked out when the average was made.
     QString accuracy = "<p><br><table border='1' width='100%'><tr><th colspan='2'><h2>Accuracy / reliability</h2></th></tr>";
     const RotationNoise &rn = wf->rotationNoise;
+    QString strehlRange;
     if (!rn.valid){
         accuracy += "<tr><td colspan='2'>Noise estimate not available: it needs a stand removal "
                     "(rotation average) of at least 4 rotations.</td></tr>";
@@ -3962,8 +3963,23 @@ void SurfaceManager::report(){
                 QString(" / %1").arg(strehl(wf->std), 0, 'f', 4) + "</td></tr>";
         if (cleanSq > 0){
             double cleanNm = sqrt(cleanSq);
+            // The floor itself is an estimate from N rotations with N-2 degrees
+            // of freedom; sigma is known to about 1/sqrt(2*dof) of itself.
+            // The range is the Strehl for the floor that much lower and higher.
+            const double rel = 1. / sqrt(2. * qMax(1, rn.n - 2));
+            const double floorLo = floorNm * qMax(0., 1. - rel);
+            const double floorHi = floorNm * (1. + rel);
+            const double strehlLo = strehl(sqrt(rmsNm * rmsNm - floorLo * floorLo) / outputLambda);
+            const double strehlHi = strehl(sqrt(qMax(0., rmsNm * rmsNm - floorHi * floorHi)) / outputLambda);
             accuracy += "<tr><td>RMS / Strehl with the noise removed</td><td>" + nmText(cleanNm) +
-                    QString(" / %1").arg(strehl(cleanNm / outputLambda), 0, 'f', 4) + "</td></tr>";
+                    QString(" / %1 (range %2 - %3)").arg(strehl(cleanNm / outputLambda), 0, 'f', 4)
+                    .arg(strehlLo, 0, 'f', 4).arg(strehlHi, 0, 'f', 4) + "</td></tr>";
+            // Under the measured Strehl in the header, which stays as DFTFringe
+            // gives it - but only when the estimate applies to this wavefront.
+            // mStrehl's text leaves its big <FONT> open, hence the </font>.
+            if (!stale)
+                strehlRange = QString("</font><br><font size='3'>(with noise removed: %1 - %2)</font>")
+                        .arg(strehlLo, 0, 'f', 3).arg(strehlHi, 0, 'f', 3);
         }
         else {
             accuracy += "<tr><td>RMS / Strehl with the noise removed</td><td>The measured RMS is within the noise "
@@ -3979,6 +3995,7 @@ void SurfaceManager::report(){
                     "(Bath reference, null/RoC error).</i></td></tr>";
     }
     accuracy += "</table></p>";
+    html.replace("%STREHL_RANGE%", strehlRange);
 
     // zerenike values
     QString zerns("<p>This is a flat so no zernike values are computed.</p>");
