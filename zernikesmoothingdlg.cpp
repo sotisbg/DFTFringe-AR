@@ -135,6 +135,13 @@ void ZernikeSmoothingDlg::on_createWaveFront_clicked()
 
     m_sm->createWaveFrontFromPhaseMap(result, m_wf.m_outside, m_wf.m_inside
                                                ,l.back(), WavefrontOrigin::Smoothed);
+    // The noise estimate of a rotation average still applies, taken for the
+    // smoothing order (the report looks that entry up).  A spherical only or
+    // hand edited set of terms is no plain smoothing, so it gets none.
+    if (!m_spherical_only && !ui->useCurrentZernySet->isChecked()){
+        m_sm->m_wavefronts.back()->rotationNoise = m_wf.rotationNoise;
+        m_sm->m_wavefronts.back()->rotationNoise.smoothOrder = m_maxOrder;
+    }
 
     if (ui->showResidual->isChecked()){
         m_sm->subtract(&m_wf, m_sm->m_wavefronts.back(), false);
