@@ -4097,7 +4097,7 @@ void SurfaceManager::report(){
                             "lab that are not rotationally symmetric are removed with the stand.</td></tr>")
                 .arg(rn.n).arg(100. / sqrt(2. * qMax(1, rn.n - 2)), 0, 'f', 0);
         accuracy += "<tr><td>Not included</td><td><i>Rotationally symmetric test errors (Bath reference, "
-                    "null/RoC error): rotation averaging cannot detect them. Detail finer than the "
+                    "null/RoC error). Detail finer than the "
                     "resolution of the interferogram processing (fine zones, micro roughness) is not "
                     "in the RMS at all.</i></td></tr>";
     }
