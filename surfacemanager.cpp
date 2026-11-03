@@ -3049,6 +3049,45 @@ void SurfaceManager::computeRotationNoise(const QList<wavefront *> &inputs, cons
     avg->rotationNoise = rn;
 }
 
+// How far each rotation of a rotation average is from the others, to decide
+// whether it is worth measuring again.  For every rotation: its noise
+// residual, that as a multiple of the median, what it adds to the average
+// (residual / N) and the noise floor the average would have if this rotation
+// were a typical one (median residual).  Wizard only - see fhtml markers.
+static QString rotationDeviationTable(const RotationNoise &rn){
+    const int N = rn.n;
+    if (!rn.valid || N < 4 || (int)rn.residualNm.size() != N || (int)rn.angles.size() != N)
+        return QString();
+    std::vector<double> sorted = rn.residualNm;
+    std::sort(sorted.begin(), sorted.end());
+    const double med = (N % 2) ? sorted[N/2] : 0.5 * (sorted[N/2 - 1] + sorted[N/2]);
+    double sumSq = 0.;
+    for (double r : rn.residualNm)
+        sumSq += r * r;
+    QString t = QString("<h3>How much does each rotation deviate?</h3>"
+                        "<p>Noise of the average now: <b>%1 nm</b> (no smoothing). A rotation up to "
+                        "1.5 x the median is normal scatter; 1.5 - 2.5 x is noticeable; above 2.5 x "
+                        "it is far out. The last column is what measuring that rotation again "
+                        "would gain at best.</p>"
+                        "<table border='1' cellspacing='2' cellpadding='2'>"
+                        "<tr><td><b>rotation</b></td><td><b>residual, nm</b></td><td><b>x median</b></td>"
+                        "<td><b>adds to the average, nm</b></td><td><b>noise floor if typical, nm</b></td>"
+                        "<td><b>verdict</b></td></tr>").arg(rn.floorNm, 0, 'f', 2);
+    for (int i = 0; i < N; ++i){
+        const double r = rn.residualNm[i];
+        const double ratio = (med > 0.) ? r / med : 0.;
+        const double floorIfTypical = sqrt(qMax(0., sumSq - r * r + med * med) / (N - 2.)) / sqrt((double)N);
+        QString verdict = (ratio < 1.5) ? QString("normal")
+                        : (ratio < 2.5) ? QString("<b>noticeable</b>")
+                                        : QString("<b><font color='red'>far out</font></b>");
+        t += QString("<tr><td>%1</td><td>%2</td><td>%3</td><td>%4</td><td>%5</td><td>%6</td></tr>")
+                .arg(rn.angles[i], 0, 'f', 1).arg(r, 0, 'f', 2).arg(ratio, 0, 'f', 2)
+                .arg(r / N, 0, 'f', 2).arg(floorIfTypical, 0, 'f', 2).arg(verdict);
+    }
+    t += "</table>";
+    return t;
+}
+
 void SurfaceManager::computeStandAstig(define_input *wizPage, QList<rotationDef *> list){
     // The old code demanded an exact 90 deg partner for every file and
     // compared doubles with ==, so an entry of 89.5 deg failed outright while
@@ -3313,10 +3352,28 @@ void SurfaceManager::computeStandAstig(define_input *wizPage, QList<rotationDef 
         }
         QStringList dropped = droppedRotations.split(" ", Qt::SkipEmptyParts);
         computeRotationNoise(noiseInputs, noiseAngles, m_standRemoved, dropped.join(","));
-        if (m_standRemoved->rotationNoise.valid)
+        const RotationNoise &rn = m_standRemoved->rotationNoise;
+        if (rn.valid){
             wizPage->m_log->append(QString("noise of one rotation %1 nm, noise floor of the average %2 nm")
-                                   .arg(m_standRemoved->rotationNoise.sigmaNm, 0, 'f', 2)
-                                   .arg(m_standRemoved->rotationNoise.floorNm, 0, 'f', 2));
+                                   .arg(rn.sigmaNm, 0, 'f', 2).arg(rn.floorNm, 0, 'f', 2));
+            std::vector<double> sorted = rn.residualNm;
+            std::sort(sorted.begin(), sorted.end());
+            const int N = sorted.size();
+            const double med = (N % 2) ? sorted[N/2] : 0.5 * (sorted[N/2 - 1] + sorted[N/2]);
+            double sumSq = 0.;
+            for (double r : rn.residualNm)
+                sumSq += r * r;
+            for (int i = 0; i < N && i < (int)rn.angles.size(); ++i){
+                const double r = rn.residualNm[i];
+                if (med <= 0. || r < 1.5 * med)
+                    continue;
+                const double floorIfTypical = sqrt(qMax(0., sumSq - r * r + med * med) / (N - 2.)) / sqrt((double)N);
+                wizPage->m_log->append(QString("Rotation %1: noise %2 nm = %3 x median; measuring it again "
+                                               "could lower the noise floor from %4 to %5 nm")
+                                       .arg(rn.angles[i], 0, 'f', 1).arg(r, 0, 'f', 2).arg(r / med, 0, 'f', 2)
+                                       .arg(rn.floorNm, 0, 'f', 2).arg(floorIfTypical, 0, 'f', 2));
+            }
+        }
     }
 
     QTextEdit *page2 = new QTextEdit;
@@ -3418,6 +3475,11 @@ void SurfaceManager::computeStandAstig(define_input *wizPage, QList<rotationDef 
                          .arg(verdict));
         }
         fhtml.append("</table>");
+        {
+            QString dev = rotationDeviationTable(m_standRemoved->rotationNoise);
+            if (!dev.isEmpty())
+                fhtml.append("<!--w-->" + dev + "<!--/w-->");
+        }
         if (!repeatThese.isEmpty()){
             fhtml.append(QString("<!--w--><p><b>Worth measuring again: %1</b><br>"
                                  "These rotations do not agree with the rest about what the stand was "
