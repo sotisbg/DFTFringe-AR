@@ -1,9 +1,7 @@
 name: build-windows
+# AR: not run on push/PR - only Windows Qt5 is built for releases.
+# Still callable by hand, and build-linux by make-release.
 on:
-  push:
-    branches:
-      - master
-  pull_request:
   workflow_dispatch:
   workflow_call:
 
