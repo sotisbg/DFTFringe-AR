@@ -3057,9 +3057,10 @@ void SurfaceManager::computeRotationNoise(const QList<wavefront *> &inputs, cons
 // surface itself is taken as sqrt(rms^2 - floor^2) and the floor added back
 // on, so the Strehl is what the next measurement would be expected to show.
 // Worth measuring again: far out (2.5 x the median: something was different
-// that time) or the Strehl moves by 0.001 or more (the third decimal).
+// that time), the Strehl moves by 0.001 or more (the third decimal) or the
+// RMS falls by 10 % or more.
 struct RotationDeviation {
-    double angle, residualNm, ratio, addsNm, floorIfTypicalNm, strehlIfTypical;
+    double angle, residualNm, ratio, addsNm, floorIfTypicalNm, rmsIfTypicalNm, strehlIfTypical;
     bool worth;
 };
 static double strehlOfNm(double rmsNm){ return exp(-pow(2. * M_PI * rmsNm / outputLambda, 2)); }
@@ -3083,8 +3084,10 @@ static std::vector<RotationDeviation> rotationDeviations(const RotationNoise &rn
         d.ratio = (med > 0.) ? d.residualNm / med : 0.;
         d.addsNm = d.residualNm / N;
         d.floorIfTypicalNm = sqrt(qMax(0., sumSq - d.residualNm * d.residualNm + med * med) / (N - 2.)) / sqrt((double)N);
-        d.strehlIfTypical = strehlOfNm(sqrt(surfaceSq + d.floorIfTypicalNm * d.floorIfTypicalNm));
-        d.worth = d.ratio >= 2.5 || d.strehlIfTypical - strehlNow >= 0.001;
+        d.rmsIfTypicalNm = sqrt(surfaceSq + d.floorIfTypicalNm * d.floorIfTypicalNm);
+        d.strehlIfTypical = strehlOfNm(d.rmsIfTypicalNm);
+        d.worth = d.ratio >= 2.5 || d.strehlIfTypical - strehlNow >= 0.001
+                || d.rmsIfTypicalNm <= 0.9 * rn.rmsNm;
         out.push_back(d);
     }
     return out;
@@ -3096,25 +3099,40 @@ static QString rotationDeviationTable(const RotationNoise &rn){
     std::vector<RotationDeviation> dev = rotationDeviations(rn, strehlNow);
     if (dev.empty())
         return QString();
+    // How much of the measured RMS is noise at all: when it is little, no
+    // rotation measured again can change much.
+    const double share = (rn.rmsNm > 0.) ? qMin(1., pow(rn.floorNm / rn.rmsNm, 2)) : 0.;
+    QString shareText = (share < 0.25) ? QString("minor - measuring again will hardly change the result")
+                      : (share < 0.6)  ? QString("noticeable")
+                                       : QString("dominant - better measurements would show a better mirror, "
+                                                 "although the Strehl may still hardly move");
     QString t = QString("<h3>How much does each rotation deviate?</h3>"
                         "<p>The average now: RMS <b>%1 nm</b>, noise floor <b>%2 nm</b>, Strehl <b>%3</b> "
-                        "at %4 nm (no smoothing). A rotation up to 1.5 x the median is normal scatter, "
-                        "1.5 - 2.5 x noticeable, above 2.5 x far out. The last columns are what measuring "
-                        "that rotation again would gain at best. Worth it when the rotation is far out "
-                        "or the Strehl would move by 0.001 or more.</p>"
+                        "at %4 nm (no smoothing).<br>"
+                        "Noise is <b>%5%</b> of the measured RMS squared: %6.<br>"
+                        "A rotation up to 1.5 x the median is normal scatter, 1.5 - 2.5 x noticeable, above "
+                        "2.5 x far out (something was different that time: the mirror sat differently, "
+                        "was not settled, vibration). The \"if typical\" columns are what measuring that "
+                        "rotation again would gain at best. Worth it when the rotation is far out, the "
+                        "Strehl would move by 0.001 or more, or the RMS would fall by 10% or more.</p>"
                         "<table border='1' cellspacing='2' cellpadding='2'>"
                         "<tr><td><b>rotation</b></td><td><b>residual, nm</b></td><td><b>x median</b></td>"
                         "<td><b>adds to the average, nm</b></td><td><b>noise floor if typical, nm</b></td>"
+                        "<td><b>RMS if typical, nm</b></td>"
                         "<td><b>Strehl if typical</b></td><td><b>measure again?</b></td></tr>")
-            .arg(rn.rmsNm, 0, 'f', 2).arg(rn.floorNm, 0, 'f', 2).arg(strehlNow, 0, 'f', 4).arg(outputLambda, 0, 'f', 0);
+            .arg(rn.rmsNm, 0, 'f', 2).arg(rn.floorNm, 0, 'f', 2).arg(strehlNow, 0, 'f', 4).arg(outputLambda, 0, 'f', 0)
+            .arg(100. * share, 0, 'f', 0).arg(shareText);
     for (const RotationDeviation &d : dev){
         QString how = (d.ratio < 1.5) ? QString("normal")
                     : (d.ratio < 2.5) ? QString("noticeable")
                                       : QString("<font color='red'>far out</font>");
         QString advice = d.worth ? QString("<b>worth it</b>") : QString("not needed");
-        t += QString("<tr><td>%1</td><td>%2</td><td>%3 (%4)</td><td>%5</td><td>%6</td><td>%7 (%8%9)</td><td>%10</td></tr>")
+        t += QString("<tr><td>%1</td><td>%2</td><td>%3 (%4)</td><td>%5</td><td>%6</td><td>%7 (%8%)</td>"
+                     "<td>%9 (%10%11)</td><td>%12</td></tr>")
                 .arg(d.angle, 0, 'f', 1).arg(d.residualNm, 0, 'f', 2).arg(d.ratio, 0, 'f', 2).arg(how)
                 .arg(d.addsNm, 0, 'f', 2).arg(d.floorIfTypicalNm, 0, 'f', 2)
+                .arg(d.rmsIfTypicalNm, 0, 'f', 2)
+                .arg(rn.rmsNm > 0. ? 100. * (d.rmsIfTypicalNm / rn.rmsNm - 1.) : 0., 0, 'f', 0)
                 .arg(d.strehlIfTypical, 0, 'f', 4).arg(d.strehlIfTypical >= strehlNow ? "+" : "")
                 .arg(d.strehlIfTypical - strehlNow, 0, 'f', 4).arg(advice);
     }
