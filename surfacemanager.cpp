@@ -62,6 +62,7 @@
 #include <QTabWidget>
 #include <QPrintDialog>
 #include <QSplitter>
+#include <QRegularExpression>
 #include <QLayout>
 #include "settingsGeneral2.h"
 #include "foucaultview.h"
@@ -3407,8 +3408,11 @@ void SurfaceManager::computeStandAstig(define_input *wizPage, QList<rotationDef 
             bool dropped = sfit.outlier[i] && rotated.size() >= 5;
             // A rotation left out is always a suspect too: say both, it used to
             // read as if nothing more were to be done about it.
-            QString verdict = dropped ? "left out of the average, <b>measure again</b>"
-                                      : (sfit.suspect[i] ? "<b>measure again</b>" : "yes");
+            // <!--w-->..<!--/w--> is shown in the wizard only, <!--p-->..<!--/p-->
+            // in the printed report only (see where fhtml is finished).
+            QString verdict = dropped ? "left out of the average<!--w-->, <b>measure again</b><!--/w-->"
+                                      : (sfit.suspect[i] ? "<!--w--><b>measure again</b><!--/w--><!--p-->yes<!--/p-->"
+                                                         : "yes");
             if (sfit.suspect[i])
                 repeatThese += QString("%1 deg (residual %2) ")
                                .arg(list[i]->angle, 0, 'f', 1)
@@ -3421,13 +3425,13 @@ void SurfaceManager::computeStandAstig(define_input *wizPage, QList<rotationDef 
         }
         fhtml.append("</table>");
         if (!repeatThese.isEmpty()){
-            fhtml.append(QString("<p><b>Worth measuring again: %1</b><br>"
+            fhtml.append(QString("<!--w--><p><b>Worth measuring again: %1</b><br>"
                                  "These rotations do not agree with the rest about what the stand was "
                                  "doing. Either the mirror sat differently on the supports that time, "
                                  "or the measurement itself was disturbed. Repeating them costs less "
                                  "than adding rotations: the error of the result falls only as the "
                                  "square root of their number, while one bad rotation moves it "
-                                 "outright.</p>").arg(repeatThese));
+                                 "outright.</p><!--/w-->").arg(repeatThese));
         }
         else if (sfit.n >= 3){
             fhtml.append("<p>No rotation stands out - as far as this test can tell, the stand did "
@@ -3523,9 +3527,9 @@ void SurfaceManager::computeStandAstig(define_input *wizPage, QList<rotationDef 
             fhtml.append("<h3>How to make it better</h3><ul>");
 
             if (!repeatThese.isEmpty())
-                fhtml.append(QString("<li><b>Measure again at %1</b> before anything else. One "
+                fhtml.append(QString("<!--w--><li><b>Measure again at %1</b> before anything else. One "
                                      "rotation out of step moves the answer outright, and it costs "
-                                     "one measurement to put right.</li>").arg(repeatThese));
+                                     "one measurement to put right.</li><!--/w-->").arg(repeatThese));
 
             if (oAst != 0 && oAst->separable){
                 const double magAst = sqrt(oAst->mirrorX * oAst->mirrorX + oAst->mirrorY * oAst->mirrorY);
@@ -3599,6 +3603,13 @@ void SurfaceManager::computeStandAstig(define_input *wizPage, QList<rotationDef 
                      "are averaged.</p>");
     }
     fhtml.append("</body></html>");
+    // Advice to measure a rotation again is for whoever sits at the wizard;
+    // the printed report only says which rotations were left out.
+    const QRegularExpression screenOnly("<!--w-->.*?<!--/w-->", QRegularExpression::DotMatchesEverythingOption);
+    const QRegularExpression printOnly("<!--p-->.*?<!--/p-->", QRegularExpression::DotMatchesEverythingOption);
+    QString fitPdfHtml = fhtml;
+    fitPdfHtml.remove(screenOnly);
+    fhtml.remove(printOnly);
     pageFit->setHtml(fhtml);
 
     QTabWidget *tabw = new QTabWidget();
@@ -3635,7 +3646,7 @@ void SurfaceManager::computeStandAstig(define_input *wizPage, QList<rotationDef 
      QTextCursor cursor(&pdfDoc);
      QTextBlockFormat blockFormat;
      blockFormat.setPageBreakPolicy(QTextFormat::PageBreak_AlwaysBefore);
-     cursor.insertHtml(pageFit->toHtml());
+     cursor.insertHtml(fitPdfHtml);
      cursor.insertBlock(blockFormat);
      cursor.insertHtml(editor->toHtml());
      cursor.insertBlock(blockFormat);
