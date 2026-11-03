@@ -4034,7 +4034,13 @@ void SurfaceManager::report(){
                 }
         }
         double floorNm = sigmaNm / sqrt((double)rn.n);
-        double cleanSq = rmsNm * rmsNm - floorNm * floorNm;
+        // The surface with the noise removed is always taken from the
+        // unsmoothed figures: smoothing removes real fine detail of the glass
+        // as well as noise, and taking the noise off a smoothed RMS on top of
+        // that credited the smoothing twice.
+        const double baseRmsNm = rn.rmsNm;
+        const double baseFloorNm = rn.floorNm;
+        double cleanSq = baseRmsNm * baseRmsNm - baseFloorNm * baseFloorNm;
 
         bool stale = !haveEntry || (rn.smoothOrder > 0 && gb > 0)
                 || rn.removed != metricRemovedTerms(m_surfaceTools)
@@ -4064,22 +4070,24 @@ void SurfaceManager::report(){
             // of freedom; sigma is known to about 1/sqrt(2*dof) of itself.
             // The range is the Strehl for the floor that much lower and higher.
             const double rel = 1. / sqrt(2. * qMax(1, rn.n - 2));
-            const double floorLo = floorNm * qMax(0., 1. - rel);
-            const double floorHi = floorNm * (1. + rel);
-            const double strehlLo = strehl(sqrt(rmsNm * rmsNm - floorLo * floorLo) / outputLambda);
-            const double strehlHi = strehl(sqrt(qMax(0., rmsNm * rmsNm - floorHi * floorHi)) / outputLambda);
-            accuracy += "<tr><td>RMS / Strehl with the noise removed</td><td>" + nmText(cleanNm) +
-                    QString(" / %1 (range %2 - %3)").arg(strehl(cleanNm / outputLambda), 0, 'f', 4)
-                    .arg(strehlLo, 0, 'f', 4).arg(strehlHi, 0, 'f', 4) + "</td></tr>";
+            const double floorLo = baseFloorNm * qMax(0., 1. - rel);
+            const double floorHi = baseFloorNm * (1. + rel);
+            const double strehlLo = strehl(sqrt(baseRmsNm * baseRmsNm - floorLo * floorLo) / outputLambda);
+            const double strehlHi = strehl(sqrt(qMax(0., baseRmsNm * baseRmsNm - floorHi * floorHi)) / outputLambda);
+            accuracy += "<tr><td>RMS / Strehl with the noise removed (no smoothing)</td><td>" + nmText(cleanNm) +
+                    QString(" / %1 (range %2 - %3)<br>from %4 nm RMS and %5 nm noise floor without smoothing")
+                    .arg(strehl(cleanNm / outputLambda), 0, 'f', 4)
+                    .arg(strehlLo, 0, 'f', 4).arg(strehlHi, 0, 'f', 4)
+                    .arg(baseRmsNm, 0, 'f', 2).arg(baseFloorNm, 0, 'f', 2) + "</td></tr>";
             // Under the measured Strehl in the header, which stays as DFTFringe
             // gives it - but only when the estimate applies to this wavefront.
             // mStrehl's text leaves its big <FONT> open, hence the </font>.
             if (!stale)
-                strehlRange = QString("</font><br><font size='3'>(with noise removed: %1 - %2)</font>")
+                strehlRange = QString("</font><br><font size='3'>(with noise removed, no smoothing: %1 - %2)</font>")
                         .arg(strehlLo, 0, 'f', 3).arg(strehlHi, 0, 'f', 3);
         }
         else {
-            accuracy += "<tr><td>RMS / Strehl with the noise removed</td><td>The measured RMS is within the noise "
+            accuracy += "<tr><td>RMS / Strehl with the noise removed (no smoothing)</td><td>The measured RMS is within the noise "
                         "floor: the surface error cannot be told apart from the noise.</td></tr>";
         }
         QStringList deviating;
