@@ -1052,12 +1052,21 @@ void SurfaceManager::writeWavefront(const QString &fname, wavefront *wf, bool sa
             file << "rotation_noise N " << rn.n << " SIGMA_NM " << rn.sigmaNm
                  << " FLOOR_NM " << rn.floorNm << " RMS_NM " << rn.rmsNm
                  << " REMOVED " << (rn.removed.isEmpty() ? std::string("-") : rn.removed.toStdString())
-                 << " BLUR " << rn.blur
                  << " DROPPED " << (rn.dropped.isEmpty() ? std::string("-") : rn.dropped.toStdString())
+                 << " SMOOTH " << rn.smoothOrder
                  << std::endl;
             for (size_t i = 0; i < rn.angles.size() && i < rn.residualNm.size() && i < rn.deviating.size(); ++i)
                 file << "rotation_residual " << rn.angles[i] << " " << rn.residualNm[i]
                      << " " << (rn.deviating[i] ? 1 : 0) << std::endl;
+            // smoothing tables, entries "setting:sigma:rms"
+            file << "rotation_blur";
+            for (size_t i = 0; i < rn.blurPct.size() && i < rn.blurSigmaNm.size() && i < rn.blurRmsNm.size(); ++i)
+                file << " " << rn.blurPct[i] << ":" << rn.blurSigmaNm[i] << ":" << rn.blurRmsNm[i];
+            file << std::endl;
+            file << "rotation_zernike";
+            for (size_t i = 0; i < rn.zernOrder.size() && i < rn.zernSigmaNm.size() && i < rn.zernRmsNm.size(); ++i)
+                file << " " << rn.zernOrder[i] << ":" << rn.zernSigmaNm[i] << ":" << rn.zernRmsNm[i];
+            file << std::endl;
         }
 
         file << "outside ellipse " <<
@@ -1411,8 +1420,8 @@ wavefront * SurfaceManager::readWaveFront(const QString &fileName){
                     else if (key == "FLOOR_NM") rn.floorNm = val.toDouble();
                     else if (key == "RMS_NM") rn.rmsNm = val.toDouble();
                     else if (key == "REMOVED") rn.removed = (val == "-") ? QString() : val;
-                    else if (key == "BLUR") rn.blur = val.toDouble();
                     else if (key == "DROPPED") rn.dropped = (val == "-") ? QString() : val;
+                    else if (key == "SMOOTH") rn.smoothOrder = val.toInt();
                 }
                 rn.valid = rn.n >= 4 && rn.sigmaNm > 0.;
                 continue;
@@ -1423,6 +1432,27 @@ wavefront * SurfaceManager::readWaveFront(const QString &fileName){
                     wf->rotationNoise.angles.push_back(sl[1].toDouble());
                     wf->rotationNoise.residualNm.push_back(sl[2].toDouble());
                     wf->rotationNoise.deviating.push_back(sl[3].toInt() != 0);
+                }
+                continue;
+            }
+            if (l.startsWith("rotation_blur") || l.startsWith("rotation_zernike")){
+                RotationNoise &rn = wf->rotationNoise;
+                const bool blur = l.startsWith("rotation_blur");
+                QStringList sl = l.split(" ", Qt::SkipEmptyParts);
+                for (int k = 1; k < sl.size(); ++k){
+                    QStringList e = sl[k].split(":");
+                    if (e.size() != 3)
+                        continue;
+                    if (blur){
+                        rn.blurPct.push_back(e[0].toDouble());
+                        rn.blurSigmaNm.push_back(e[1].toDouble());
+                        rn.blurRmsNm.push_back(e[2].toDouble());
+                    }
+                    else {
+                        rn.zernOrder.push_back(e[0].toInt());
+                        rn.zernSigmaNm.push_back(e[1].toDouble());
+                        rn.zernRmsNm.push_back(e[2].toDouble());
+                    }
                 }
                 continue;
             }
@@ -2802,9 +2832,15 @@ static QString metricRemovedTerms(surfaceAnalysisTools *tools){
 // Mirror is the average itself (the counter rotated inputs averaged) and
 // Stand the average of wf_a - R_a(Mirror), so whatever is left in noise_a
 // repeats neither with the mirror nor with the stand.  Its RMS is taken the
-// way the metric takes the RMS of the average: same terms nulled, same blur.
-// Fitting Mirror and Stand uses up two of the N degrees of freedom, hence
-// sigma = sqrt(mean(rms^2) * N/(N-2)); the average holds sigma/sqrt(N).
+// way the metric takes the RMS of the average: same terms nulled.  Fitting
+// Mirror and Stand uses up two of the N degrees of freedom, hence
+// sigma = sqrt(sum(rms^2)/(N-2)); the average holds sigma/sqrt(N).
+//
+// Smoothing the result afterwards takes part of the noise with it, so sigma
+// is also worked out for each Gaussian blur and each Zernike smoothing order
+// the user might apply later, together with the RMS of the average under the
+// same smoothing (that is what tells the report which entry applies and
+// whether the wavefront is still the one the estimate was made for).
 //
 // Rotationally symmetric errors (reference sphere, null, RoC) end up in
 // Stand and Mirror alike and cannot be seen here at all.
@@ -2821,6 +2857,10 @@ void SurfaceManager::computeRotationNoise(const QList<wavefront *> &inputs, cons
 
     mirrorDlg *md = mirrorDlg::get_Instance();
     zernikeProcess &zp = *zernikeProcess::get_Instance();
+
+    // The average with the metric terms nulled but not blurred.  Done first:
+    // the nulling uses the Zernike grid of the wavefront it is given.
+    cv::Mat avgNulled = zp.null_unwrapped(*avg, avg->InputZerns, zernEnables, 0, Z_TERMS);
 
     // The average and its outer mask, as rotateThese() hands them to rotate().
     wavefront mirror;
@@ -2849,22 +2889,17 @@ void SurfaceManager::computeRotationNoise(const QList<wavefront *> &inputs, cons
     cv::Mat invalid;
     cv::bitwise_not(valid, invalid);
 
-    int gaussianRad = 0;
-    if (m_GB_enabled){
-        gaussianRad = 2 * avg->m_outside.m_radius * m_gbValue * .01;
-        gaussianRad &= 0xfffffffe;
-        ++gaussianRad;
-    }
-
+    // Noise maps with the metric terms nulled.
+    std::vector<cv::Mat> noise(N);
     std::vector<double> rms(N);
     double sumSq = 0.;
     for (int i = 0; i < N; ++i){
-        cv::Mat noise = cv::Mat(inputs[i]->data) - rotMirror[i] - stand;
+        cv::Mat n = cv::Mat(inputs[i]->data) - rotMirror[i] - stand;
         // Zero is "no data" to the Zernike fit and the nulling.
-        noise.setTo(0., invalid);
+        n.setTo(0., invalid);
 
         wavefront t;
-        t.data = noise;
+        t.data = n;
         t.m_outside = avg->m_outside;
         t.m_inside = avg->m_inside;
         t.mask = valid.clone();
@@ -2874,30 +2909,27 @@ void SurfaceManager::computeRotationNoise(const QList<wavefront *> &inputs, cons
         std::vector<double> z = t.InputZerns;
         if (m_surfaceTools->m_useDefocus && z.size() > 3)
             z[3] = m_surfaceTools->m_defocus;   // so the slider does not add defocus to the noise
-        cv::Mat nulled = zp.null_unwrapped(t, z, zernEnables, 0, Z_TERMS);
-        cv::Mat work = nulled;
-        if (gaussianRad > 0){
-            work = nulled.clone();
-            CropGaussianBlur(nulled, work, gaussianRad, t.m_outside, t.m_inside);
-        }
+        noise[i] = zp.null_unwrapped(t, z, zernEnables, 0, Z_TERMS);
         cv::Scalar mean, sd;
-        cv::meanStdDev(work, mean, sd, valid);
+        cv::meanStdDev(noise[i], mean, sd, valid);
         rms[i] = sd.val[0] * md->lambda;
         sumSq += rms[i] * rms[i];
     }
+    auto sigmaOf = [N](double sumOfSquares){ return sqrt(sumOfSquares / (N - 2.)); };
 
     std::vector<double> sorted = rms;
     std::sort(sorted.begin(), sorted.end());
     double median = (N % 2) ? sorted[N/2] : 0.5 * (sorted[N/2 - 1] + sorted[N/2]);
 
     rn.n = N;
-    rn.sigmaNm = sqrt(sumSq / N * N / (N - 2.));
+    rn.sigmaNm = sigmaOf(sumSq);
     rn.floorNm = rn.sigmaNm / sqrt((double)N);
-    cv::Scalar mean, sd;
-    cv::meanStdDev(avg->workData, mean, sd, avg->workMask);
-    rn.rmsNm = sd.val[0] * md->lambda;
+    {
+        cv::Scalar mean, sd;
+        cv::meanStdDev(avgNulled, mean, sd, avg->workMask);
+        rn.rmsNm = sd.val[0] * md->lambda;
+    }
     rn.removed = metricRemovedTerms(m_surfaceTools);
-    rn.blur = m_GB_enabled ? m_gbValue : 0.;
     rn.dropped = dropped;
     for (int i = 0; i < N; ++i){
         rn.angles.push_back(anglesDeg[i]);
@@ -2907,6 +2939,110 @@ void SurfaceManager::computeRotationNoise(const QList<wavefront *> &inputs, cons
         // stand or mirror support than the others.
         rn.deviating.push_back(rms[i] > 1.5 * median);
     }
+
+    // Gaussian blur, exactly as generateSurfacefromWavefront() applies it
+    // (the blur setting is a whole percent of the diameter).
+    const int blurs[] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 15, 20};
+    for (int gb : blurs){
+        int gaussianRad = 2 * avg->m_outside.m_radius * gb * .01;
+        gaussianRad &= 0xfffffffe;
+        ++gaussianRad;
+        double s = 0.;
+        cv::Mat blurred;
+        for (int i = 0; i < N; ++i){
+            CropGaussianBlur(noise[i], blurred, gaussianRad, avg->m_outside, avg->m_inside);
+            cv::Scalar mean, sd;
+            cv::meanStdDev(blurred, mean, sd, valid);
+            s += pow(sd.val[0] * md->lambda, 2);
+        }
+        CropGaussianBlur(avgNulled, blurred, gaussianRad, avg->m_outside, avg->m_inside);
+        cv::Scalar mean, sd;
+        cv::meanStdDev(blurred, mean, sd, avg->workMask);
+        rn.blurPct.push_back(gb);
+        rn.blurSigmaNm.push_back(sigmaOf(s));
+        rn.blurRmsNm.push_back(sd.val[0] * md->lambda);
+        QApplication::processEvents();
+    }
+
+    // Zernike smoothing (Tools - Smooth current wave front) keeps only the
+    // terms up to the chosen order.  The terms are close to orthogonal, so a
+    // least squares fit on a sub sampled grid tells how much of each map
+    // survives; one Gram matrix serves every order, the lower orders being
+    // the leading block of it.  Circular apertures only: an annulus uses a
+    // different set of polynomials.
+    if (!md->m_useAnnular){
+        const int maxOrder = 30;
+        const int savedTerms = zp.getNumberOfTerms();
+        const int savedOrder = 2 * (qRound(sqrt((double)savedTerms)) - 1);
+        std::vector<double> rho, theta;
+        std::vector<int> px, py;
+        const double cx = avg->m_outside.m_center.x();
+        const double cy = avg->m_outside.m_center.y();
+        const double rad = avg->m_outside.m_radius;
+        const int step = qMax(1, avg->data.cols / 160);
+        for (int y = 0; y < avg->data.rows; y += step)
+            for (int x = 0; x < avg->data.cols; x += step){
+                if (valid.at<uchar>(y,x) == 0 || avg->workMask.at<uchar>(y,x) == 0)
+                    continue;
+                double ux = (x - cx) / rad;
+                double uy = (y - cy) / rad;
+                double r = sqrt(ux * ux + uy * uy);
+                if (r > 1.)
+                    continue;
+                rho.push_back(r);
+                theta.push_back(atan2(uy, ux));
+                px.push_back(x);
+                py.push_back(y);
+            }
+        const int P = rho.size();
+        if (P > 1000){
+            // zpmC fills m_norms up to this order; setMaxOrder also resizes
+            // the global enables, which are put back exactly as they were.
+            const std::vector<bool> savedEnables = zernEnables;
+            zp.setMaxOrder(maxOrder);
+            arma::mat Z = zp.zpmC(arma::rowvec(rho), arma::rowvec(theta), maxOrder);
+            zp.setMaxOrder(savedOrder);
+            zernEnables = savedEnables;
+            arma::mat G = Z.t() * Z;
+            arma::rowvec colSum = arma::sum(Z, 0);
+
+            // RMS of the fit of map m to the terms of order <= order, with the
+            // metric terms left out the way the metric leaves them out.
+            auto smoothedRms = [&](const cv::Mat &m, int order){
+                const int T = (order / 2 + 1) * (order / 2 + 1);
+                arma::vec v(P);
+                for (int k = 0; k < P; ++k)
+                    v(k) = m.at<double>(py[k], px[k]);
+                arma::vec b = Z.cols(0, T - 1).t() * v;
+                arma::vec c;
+                if (!arma::solve(c, G.submat(0, 0, T - 1, T - 1), b))
+                    return -1.;
+                for (int k = 0; k < T && k < (int)zernEnables.size() && k < Z_TERMS; ++k)
+                    if (!zernEnables[k])
+                        c(k) = 0.;
+                double meanSq = arma::as_scalar(c.t() * G.submat(0, 0, T - 1, T - 1) * c) / P;
+                double mean = arma::as_scalar(colSum.cols(0, T - 1) * c) / P;
+                return sqrt(qMax(0., meanSq - mean * mean)) * md->lambda;
+            };
+
+            for (int order = 12; order <= maxOrder; order += 2){
+                double s = 0.;
+                bool ok = true;
+                for (int i = 0; i < N && ok; ++i){
+                    double r = smoothedRms(noise[i], order);
+                    ok = r >= 0.;
+                    s += r * r;
+                }
+                double ra = smoothedRms(avgNulled, order);
+                if (!ok || ra < 0.)
+                    continue;
+                rn.zernOrder.push_back(order);
+                rn.zernSigmaNm.push_back(sigmaOf(s));
+                rn.zernRmsNm.push_back(ra);
+            }
+        }
+    }
+
     rn.valid = rn.sigmaNm > 0.;
     avg->rotationNoise = rn;
 }
@@ -3746,28 +3882,63 @@ void SurfaceManager::report(){
     else {
         auto strehl = [](double rmsWaves){ return exp(-pow(2. * M_PI * rmsWaves, 2)); };
         double rmsNm = wf->std * outputLambda;
-        double floorNm = rn.floorNm;
-        double cleanSq = rmsNm * rmsNm - floorNm * floorNm;
         auto nmText = [](double nm){
             return QString("%1 nm (%2 waves at %3 nm)").arg(nm, 0, 'f', 2)
                     .arg(nm / outputLambda, 0, 'f', 4).arg(outputLambda, 0, 'f', 1);
         };
 
-        bool stale = rn.removed != metricRemovedTerms(m_surfaceTools)
-                || rn.blur != (m_GB_enabled ? m_gbValue : 0.)
-                || fabs(rmsNm - rn.rmsNm) > qMax(0.02 * rn.rmsNm, 0.05);
-        if (stale)
+        // Smoothing takes part of the noise with it, so the figures are taken
+        // for the smoothing in use: Zernike smoothing of this wavefront, else
+        // the Gaussian blur setting.
+        double sigmaNm = rn.sigmaNm;
+        double refRmsNm = rn.rmsNm;
+        QString smoothing = "none";
+        bool haveEntry = true;
+        const int gb = m_GB_enabled ? m_gbValue : 0;
+        if (rn.smoothOrder > 0){
+            smoothing = QString("Zernike smoothing to order %1").arg(rn.smoothOrder);
+            haveEntry = false;
+            for (size_t i = 0; i < rn.zernOrder.size() && i < rn.zernSigmaNm.size() && i < rn.zernRmsNm.size(); ++i)
+                if (rn.zernOrder[i] == rn.smoothOrder){
+                    sigmaNm = rn.zernSigmaNm[i];
+                    refRmsNm = rn.zernRmsNm[i];
+                    haveEntry = true;
+                }
+            if (gb > 0)
+                smoothing += QString(" and Gaussian blur %1%").arg(gb);
+        }
+        else if (gb > 0){
+            smoothing = QString("Gaussian blur %1%").arg(gb);
+            haveEntry = false;
+            for (size_t i = 0; i < rn.blurPct.size() && i < rn.blurSigmaNm.size() && i < rn.blurRmsNm.size(); ++i)
+                if (qRound(rn.blurPct[i]) == gb){
+                    sigmaNm = rn.blurSigmaNm[i];
+                    refRmsNm = rn.blurRmsNm[i];
+                    haveEntry = true;
+                }
+        }
+        double floorNm = sigmaNm / sqrt((double)rn.n);
+        double cleanSq = rmsNm * rmsNm - floorNm * floorNm;
+
+        bool stale = !haveEntry || (rn.smoothOrder > 0 && gb > 0)
+                || rn.removed != metricRemovedTerms(m_surfaceTools)
+                || fabs(rmsNm - refRmsNm) > qMax(0.02 * refRmsNm, 0.05);
+        if (!haveEntry || (rn.smoothOrder > 0 && gb > 0))
+            accuracy += QString("<tr><td colspan='2'><font color='red'>The noise was not worked out for this "
+                                "smoothing (%1); the figures below are for the unsmoothed surface.</font></td></tr>")
+                    .arg(smoothing);
+        else if (stale)
             accuracy += QString("<tr><td colspan='2'><font color='red'>The wavefront or the RMS settings changed "
-                                "since this estimate was made (RMS then %1 nm, terms removed then: %2%3). "
+                                "since this estimate was made (RMS then %1 nm, terms removed then: %2). "
                                 "The figures below may not apply.</font></td></tr>")
-                    .arg(rn.rmsNm, 0, 'f', 2).arg(rn.removed.isEmpty() ? QString("none") : rn.removed)
-                    .arg(rn.blur > 0 ? QString(", blur %1%").arg(rn.blur) : QString());
+                    .arg(refRmsNm, 0, 'f', 2).arg(rn.removed.isEmpty() ? QString("none") : rn.removed);
 
         QString rotations = QString::number(rn.n);
         if (!rn.dropped.isEmpty())
             rotations += QString(" (left out of the average by the stand fit: %1 deg)").arg(rn.dropped);
         accuracy += "<tr><td>Rotations in the average</td><td>" + rotations + "</td></tr>";
-        accuracy += "<tr><td>Noise of one rotation (sigma)</td><td>" + nmText(rn.sigmaNm) + "</td></tr>";
+        accuracy += "<tr><td>Smoothing</td><td>" + smoothing + "</td></tr>";
+        accuracy += "<tr><td>Noise of one rotation (sigma)</td><td>" + nmText(sigmaNm) + "</td></tr>";
         accuracy += "<tr><td>Noise floor of the average (sigma / sqrt(N))</td><td>" + nmText(floorNm) + "</td></tr>";
         accuracy += "<tr><td>Measured RMS / Strehl</td><td>" + nmText(rmsNm) +
                 QString(" / %1").arg(strehl(wf->std), 0, 'f', 4) + "</td></tr>";

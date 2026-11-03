@@ -45,11 +45,17 @@ struct RotationNoise {
     double floorNm = 0.;             // noise left in the average, sigma/sqrt(n)
     double rmsNm = 0.;               // rms of the average when this was worked out
     QString removed;                 // terms the metric left out then, "0,1,2,3,8"
-    double blur = 0.;                // gaussian blur percent then, 0 = none
     QString dropped;                 // rotations the stand fit left out, "0,180"
     std::vector<double> angles;      // per rotation in the average
     std::vector<double> residualNm;
     std::vector<bool>   deviating;
+    // The same with the surface smoothed afterwards: sigma of one rotation
+    // and rms of the average for each Gaussian blur percent ...
+    std::vector<double> blurPct, blurSigmaNm, blurRmsNm;
+    // ... and for each order of Zernike smoothing.
+    std::vector<int>    zernOrder;
+    std::vector<double> zernSigmaNm, zernRmsNm;
+    int smoothOrder = 0;             // > 0: this wavefront is a Zernike smoothing to that order
 };
 
 class wavefront { public:
