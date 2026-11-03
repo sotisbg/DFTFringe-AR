@@ -3052,37 +3052,71 @@ void SurfaceManager::computeRotationNoise(const QList<wavefront *> &inputs, cons
 // How far each rotation of a rotation average is from the others, to decide
 // whether it is worth measuring again.  For every rotation: its noise
 // residual, that as a multiple of the median, what it adds to the average
-// (residual / N) and the noise floor the average would have if this rotation
-// were a typical one (median residual).  Wizard only - see fhtml markers.
-static QString rotationDeviationTable(const RotationNoise &rn){
+// (residual / N), the noise floor the average would have if this rotation
+// were a typical one (median residual) and the Strehl that would give.  The
+// surface itself is taken as sqrt(rms^2 - floor^2) and the floor added back
+// on, so the Strehl is what the next measurement would be expected to show.
+// Worth measuring again: far out (2.5 x the median: something was different
+// that time) or the Strehl moves by 0.001 or more (the third decimal).
+struct RotationDeviation {
+    double angle, residualNm, ratio, addsNm, floorIfTypicalNm, strehlIfTypical;
+    bool worth;
+};
+static double strehlOfNm(double rmsNm){ return exp(-pow(2. * M_PI * rmsNm / outputLambda, 2)); }
+static std::vector<RotationDeviation> rotationDeviations(const RotationNoise &rn, double &strehlNow){
+    std::vector<RotationDeviation> out;
     const int N = rn.n;
     if (!rn.valid || N < 4 || (int)rn.residualNm.size() != N || (int)rn.angles.size() != N)
-        return QString();
+        return out;
     std::vector<double> sorted = rn.residualNm;
     std::sort(sorted.begin(), sorted.end());
     const double med = (N % 2) ? sorted[N/2] : 0.5 * (sorted[N/2 - 1] + sorted[N/2]);
     double sumSq = 0.;
     for (double r : rn.residualNm)
         sumSq += r * r;
+    const double surfaceSq = qMax(0., rn.rmsNm * rn.rmsNm - rn.floorNm * rn.floorNm);
+    strehlNow = strehlOfNm(rn.rmsNm);
+    for (int i = 0; i < N; ++i){
+        RotationDeviation d;
+        d.angle = rn.angles[i];
+        d.residualNm = rn.residualNm[i];
+        d.ratio = (med > 0.) ? d.residualNm / med : 0.;
+        d.addsNm = d.residualNm / N;
+        d.floorIfTypicalNm = sqrt(qMax(0., sumSq - d.residualNm * d.residualNm + med * med) / (N - 2.)) / sqrt((double)N);
+        d.strehlIfTypical = strehlOfNm(sqrt(surfaceSq + d.floorIfTypicalNm * d.floorIfTypicalNm));
+        d.worth = d.ratio >= 2.5 || d.strehlIfTypical - strehlNow >= 0.001;
+        out.push_back(d);
+    }
+    return out;
+}
+
+// Wizard only - see the fhtml markers.
+static QString rotationDeviationTable(const RotationNoise &rn){
+    double strehlNow = 0.;
+    std::vector<RotationDeviation> dev = rotationDeviations(rn, strehlNow);
+    if (dev.empty())
+        return QString();
     QString t = QString("<h3>How much does each rotation deviate?</h3>"
-                        "<p>Noise of the average now: <b>%1 nm</b> (no smoothing). A rotation up to "
-                        "1.5 x the median is normal scatter; 1.5 - 2.5 x is noticeable; above 2.5 x "
-                        "it is far out. The last column is what measuring that rotation again "
-                        "would gain at best.</p>"
+                        "<p>The average now: RMS <b>%1 nm</b>, noise floor <b>%2 nm</b>, Strehl <b>%3</b> "
+                        "at %4 nm (no smoothing). A rotation up to 1.5 x the median is normal scatter, "
+                        "1.5 - 2.5 x noticeable, above 2.5 x far out. The last columns are what measuring "
+                        "that rotation again would gain at best. Worth it when the rotation is far out "
+                        "or the Strehl would move by 0.001 or more.</p>"
                         "<table border='1' cellspacing='2' cellpadding='2'>"
                         "<tr><td><b>rotation</b></td><td><b>residual, nm</b></td><td><b>x median</b></td>"
                         "<td><b>adds to the average, nm</b></td><td><b>noise floor if typical, nm</b></td>"
-                        "<td><b>verdict</b></td></tr>").arg(rn.floorNm, 0, 'f', 2);
-    for (int i = 0; i < N; ++i){
-        const double r = rn.residualNm[i];
-        const double ratio = (med > 0.) ? r / med : 0.;
-        const double floorIfTypical = sqrt(qMax(0., sumSq - r * r + med * med) / (N - 2.)) / sqrt((double)N);
-        QString verdict = (ratio < 1.5) ? QString("normal")
-                        : (ratio < 2.5) ? QString("<b>noticeable</b>")
-                                        : QString("<b><font color='red'>far out</font></b>");
-        t += QString("<tr><td>%1</td><td>%2</td><td>%3</td><td>%4</td><td>%5</td><td>%6</td></tr>")
-                .arg(rn.angles[i], 0, 'f', 1).arg(r, 0, 'f', 2).arg(ratio, 0, 'f', 2)
-                .arg(r / N, 0, 'f', 2).arg(floorIfTypical, 0, 'f', 2).arg(verdict);
+                        "<td><b>Strehl if typical</b></td><td><b>measure again?</b></td></tr>")
+            .arg(rn.rmsNm, 0, 'f', 2).arg(rn.floorNm, 0, 'f', 2).arg(strehlNow, 0, 'f', 4).arg(outputLambda, 0, 'f', 0);
+    for (const RotationDeviation &d : dev){
+        QString how = (d.ratio < 1.5) ? QString("normal")
+                    : (d.ratio < 2.5) ? QString("noticeable")
+                                      : QString("<font color='red'>far out</font>");
+        QString advice = d.worth ? QString("<b>worth it</b>") : QString("not needed");
+        t += QString("<tr><td>%1</td><td>%2</td><td>%3 (%4)</td><td>%5</td><td>%6</td><td>%7 (%8%9)</td><td>%10</td></tr>")
+                .arg(d.angle, 0, 'f', 1).arg(d.residualNm, 0, 'f', 2).arg(d.ratio, 0, 'f', 2).arg(how)
+                .arg(d.addsNm, 0, 'f', 2).arg(d.floorIfTypicalNm, 0, 'f', 2)
+                .arg(d.strehlIfTypical, 0, 'f', 4).arg(d.strehlIfTypical >= strehlNow ? "+" : "")
+                .arg(d.strehlIfTypical - strehlNow, 0, 'f', 4).arg(advice);
     }
     t += "</table>";
     return t;
@@ -3356,22 +3390,16 @@ void SurfaceManager::computeStandAstig(define_input *wizPage, QList<rotationDef 
         if (rn.valid){
             wizPage->m_log->append(QString("noise of one rotation %1 nm, noise floor of the average %2 nm")
                                    .arg(rn.sigmaNm, 0, 'f', 2).arg(rn.floorNm, 0, 'f', 2));
-            std::vector<double> sorted = rn.residualNm;
-            std::sort(sorted.begin(), sorted.end());
-            const int N = sorted.size();
-            const double med = (N % 2) ? sorted[N/2] : 0.5 * (sorted[N/2 - 1] + sorted[N/2]);
-            double sumSq = 0.;
-            for (double r : rn.residualNm)
-                sumSq += r * r;
-            for (int i = 0; i < N && i < (int)rn.angles.size(); ++i){
-                const double r = rn.residualNm[i];
-                if (med <= 0. || r < 1.5 * med)
+            double strehlNow = 0.;
+            for (const RotationDeviation &d : rotationDeviations(rn, strehlNow)){
+                if (d.ratio < 1.5 && !d.worth)
                     continue;
-                const double floorIfTypical = sqrt(qMax(0., sumSq - r * r + med * med) / (N - 2.)) / sqrt((double)N);
-                wizPage->m_log->append(QString("Rotation %1: noise %2 nm = %3 x median; measuring it again "
-                                               "could lower the noise floor from %4 to %5 nm")
-                                       .arg(rn.angles[i], 0, 'f', 1).arg(r, 0, 'f', 2).arg(r / med, 0, 'f', 2)
-                                       .arg(rn.floorNm, 0, 'f', 2).arg(floorIfTypical, 0, 'f', 2));
+                wizPage->m_log->append(QString("Rotation %1: noise %2 nm = %3 x median; measured again it could "
+                                               "lower the noise floor from %4 to %5 nm, Strehl %6 -> %7: %8")
+                                       .arg(d.angle, 0, 'f', 1).arg(d.residualNm, 0, 'f', 2).arg(d.ratio, 0, 'f', 2)
+                                       .arg(rn.floorNm, 0, 'f', 2).arg(d.floorIfTypicalNm, 0, 'f', 2)
+                                       .arg(strehlNow, 0, 'f', 4).arg(d.strehlIfTypical, 0, 'f', 4)
+                                       .arg(d.worth ? "worth measuring again" : "not needed"));
             }
         }
     }
