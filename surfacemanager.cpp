@@ -4097,8 +4097,7 @@ void SurfaceManager::report(){
                             "lab that are not rotationally symmetric are removed with the stand.</td></tr>")
                 .arg(rn.n).arg(100. / sqrt(2. * qMax(1, rn.n - 2)), 0, 'f', 0);
         accuracy += "<tr><td>Not included</td><td><i>Rotationally symmetric test errors (Bath reference, "
-                    "null/RoC error): rotation averaging cannot detect them. Repeatability between "
-                    "sessions on different days (temperature, alignment) was not measured.</i></td></tr>";
+                    "null/RoC error): rotation averaging cannot detect them.</i></td></tr>";
     }
     accuracy += "</table></p>";
     html.replace("%STREHL_RANGE%", strehlRange);
