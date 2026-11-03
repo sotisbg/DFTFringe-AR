@@ -3274,11 +3274,15 @@ void SurfaceManager::computeStandAstig(define_input *wizPage, QList<rotationDef 
         if (sfit.valid && i < (int)sfit.outlier.size() && sfit.outlier[i]
                 && rotated.size() >= 5){
             droppedRotations += QString("%1 ").arg(list[i]->angle, 0, 'f', 1);
-            wizPage->m_log->append(QString("Rotation %1 left out of the average: residual %2 waves")
+            wizPage->m_log->append(QString("Rotation %1 left out of the average, measure it again: residual %2 waves")
                                    .arg(list[i]->angle, 0, 'f', 1)
                                    .arg(sfit.residual[i], 0, 'f', 4));
             continue;
         }
+        if (sfit.valid && i < (int)sfit.suspect.size() && sfit.suspect[i])
+            wizPage->m_log->append(QString("Rotation %1 does not agree with the others, worth measuring again: residual %2 waves")
+                                   .arg(list[i]->angle, 0, 'f', 1)
+                                   .arg(sfit.residual[i], 0, 'f', 4));
         wlist << rotated[i];
         usedRotations << i;
     }
