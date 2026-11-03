@@ -3401,7 +3401,9 @@ void SurfaceManager::computeStandAstig(define_input *wizPage, QList<rotationDef 
         QString repeatThese;
         for (int i = 0; i < sfit.n && i < list.size(); ++i){
             bool dropped = sfit.outlier[i] && rotated.size() >= 5;
-            QString verdict = dropped ? "left out of the average"
+            // A rotation left out is always a suspect too: say both, it used to
+            // read as if nothing more were to be done about it.
+            QString verdict = dropped ? "left out of the average, <b>measure again</b>"
                                       : (sfit.suspect[i] ? "<b>measure again</b>" : "yes");
             if (sfit.suspect[i])
                 repeatThese += QString("%1 deg (residual %2) ")
