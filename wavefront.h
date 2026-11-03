@@ -20,6 +20,7 @@
 #include <opencv2/opencv.hpp>
 #include "Circleoutline.h"
 #include <QPointF>
+#include <QString>
 
 enum class WavefrontOrigin : std::uint8_t {
     Unknown = 0,
@@ -32,6 +33,25 @@ enum class WavefrontOrigin : std::uint8_t {
     Zernikes,
     Smoothed
 };
+// How much of a rotation average (stand removal) is noise.  Worked out by
+// SurfaceManager::computeRotationNoise() from the rotations that went into
+// the average, saved in the .wft footer so a report made later from the
+// saved file can still show it.  Lengths are nm: they do not depend on the
+// output wavelength the report happens to use.
+struct RotationNoise {
+    bool   valid = false;
+    int    n = 0;                    // rotations in the average
+    double sigmaNm = 0.;             // rms noise of a single rotation
+    double floorNm = 0.;             // noise left in the average, sigma/sqrt(n)
+    double rmsNm = 0.;               // rms of the average when this was worked out
+    QString removed;                 // terms the metric left out then, "0,1,2,3,8"
+    double blur = 0.;                // gaussian blur percent then, 0 = none
+    QString dropped;                 // rotations the stand fit left out, "0,180"
+    std::vector<double> angles;      // per rotation in the average
+    std::vector<double> residualNm;
+    std::vector<bool>   deviating;
+};
+
 class wavefront { public:
     wavefront();
     ~wavefront() = default;
@@ -72,6 +92,7 @@ class wavefront { public:
     bool wasSmoothed;
     bool useSANull;
     bool m_manuallyInverted; // true if user inverted this wavefront
+    RotationNoise rotationNoise;
 };
 
 #endif // WAVEFRONT_H

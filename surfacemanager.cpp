@@ -1044,6 +1044,22 @@ void SurfaceManager::writeWavefront(const QString &fname, wavefront *wf, bool sa
             offsetOutside = outsideOffset;
         }
 
+        // Noise estimate of a rotation average.  Written before the outline so
+        // the lines every reader looks for stay at the very end of the file.
+        // Readers that do not know these keys skip them.
+        const RotationNoise &rn = wf->rotationNoise;
+        if (rn.valid){
+            file << "rotation_noise N " << rn.n << " SIGMA_NM " << rn.sigmaNm
+                 << " FLOOR_NM " << rn.floorNm << " RMS_NM " << rn.rmsNm
+                 << " REMOVED " << (rn.removed.isEmpty() ? std::string("-") : rn.removed.toStdString())
+                 << " BLUR " << rn.blur
+                 << " DROPPED " << (rn.dropped.isEmpty() ? std::string("-") : rn.dropped.toStdString())
+                 << std::endl;
+            for (size_t i = 0; i < rn.angles.size() && i < rn.residualNm.size() && i < rn.deviating.size(); ++i)
+                file << "rotation_residual " << rn.angles[i] << " " << rn.residualNm[i]
+                     << " " << (rn.deviating[i] ? 1 : 0) << std::endl;
+        }
+
         file << "outside ellipse " <<
                        wf->m_outside.m_center.x()
              << " " << wf->m_outside.m_center.y()
@@ -1383,6 +1399,32 @@ wavefront * SurfaceManager::readWaveFront(const QString &fileName){
             }
             if (l.startsWith("Do Not use null") || l.startsWith("nulled") ){
                 wf->useSANull = false;
+            }
+            if (l.startsWith("rotation_noise")){
+                QStringList sl = l.split(" ", Qt::SkipEmptyParts);
+                RotationNoise &rn = wf->rotationNoise;
+                for (int k = 1; k + 1 < sl.size(); k += 2){
+                    const QString &key = sl[k];
+                    const QString &val = sl[k + 1];
+                    if (key == "N") rn.n = val.toInt();
+                    else if (key == "SIGMA_NM") rn.sigmaNm = val.toDouble();
+                    else if (key == "FLOOR_NM") rn.floorNm = val.toDouble();
+                    else if (key == "RMS_NM") rn.rmsNm = val.toDouble();
+                    else if (key == "REMOVED") rn.removed = (val == "-") ? QString() : val;
+                    else if (key == "BLUR") rn.blur = val.toDouble();
+                    else if (key == "DROPPED") rn.dropped = (val == "-") ? QString() : val;
+                }
+                rn.valid = rn.n >= 4 && rn.sigmaNm > 0.;
+                continue;
+            }
+            if (l.startsWith("rotation_residual")){
+                QStringList sl = l.split(" ", Qt::SkipEmptyParts);
+                if (sl.size() >= 4){
+                    wf->rotationNoise.angles.push_back(sl[1].toDouble());
+                    wf->rotationNoise.residualNm.push_back(sl[2].toDouble());
+                    wf->rotationNoise.deviating.push_back(sl[3].toInt() != 0);
+                }
+                continue;
             }
         }
         wf->data= data;
@@ -1841,6 +1883,7 @@ void SurfaceManager::average(QList<wavefront *> wfList){
 
     wavefront *wf = new wavefront();
     *wf = *wfList[sizes[maxkey][0]];// copy in all the parameters (e.g. m_inside, lambda, diameter) from first wavefront to average
+    wf->rotationNoise = RotationNoise();   // belonged to the first input, not to the average
     wf->data = sum.clone();
     wf->mask = mask;
     wf->workMask = mask.clone();
@@ -1864,6 +1907,7 @@ void SurfaceManager::average(QList<wavefront *> wfList){
 }
 #include "averagewavefrontfilesdlg.h"
 void SurfaceManager::averageComplete(wavefront *wf){
+    wf->rotationNoise = RotationNoise();   // read from the first file, not true of the average
     wf->workMask = wf->mask.clone();
     m_wavefronts << wf;
     wf->wasSmoothed = false;
@@ -2011,6 +2055,7 @@ void SurfaceManager::subtract(wavefront *wf1, wavefront *wf2, bool use_null){
     //result.copyTo(masked, mask);
     wavefront *resultwf = new wavefront;
     *resultwf = *wf1;
+    resultwf->rotationNoise = RotationNoise();   // the difference has a noise of its own
     resultwf->data = result.clone();
     resultwf->mask = mask.clone();
     resultwf->workMask = mask.clone();
@@ -2736,6 +2781,136 @@ textres SurfaceManager::Phase2(QList<rotationDef *> list, QList<wavefront *> inp
 }
 
 
+// The Zernike terms the RMS metric leaves out right now, as "0,1,2,3,8"
+// (a trailing "d" when the defocus slider replaces term 3).  Stored with a
+// noise estimate so the report can tell when the metric has changed since.
+static QString metricRemovedTerms(surfaceAnalysisTools *tools){
+    QStringList t;
+    for (int z = 0; z < Z_TERMS && z < (int)zernEnables.size(); ++z)
+        if (!zernEnables[z])
+            t << QString::number(z);
+    QString r = t.join(",");
+    if (tools && tools->m_useDefocus)
+        r += "d";
+    return r;
+}
+
+// Noise of a rotation average.  Each rotation is modelled as
+//
+//     wf_a = R_a(Mirror) + Stand + noise_a
+//
+// Mirror is the average itself (the counter rotated inputs averaged) and
+// Stand the average of wf_a - R_a(Mirror), so whatever is left in noise_a
+// repeats neither with the mirror nor with the stand.  Its RMS is taken the
+// way the metric takes the RMS of the average: same terms nulled, same blur.
+// Fitting Mirror and Stand uses up two of the N degrees of freedom, hence
+// sigma = sqrt(mean(rms^2) * N/(N-2)); the average holds sigma/sqrt(N).
+//
+// Rotationally symmetric errors (reference sphere, null, RoC) end up in
+// Stand and Mirror alike and cannot be seen here at all.
+void SurfaceManager::computeRotationNoise(const QList<wavefront *> &inputs, const std::vector<double> &anglesDeg,
+                                          wavefront *avg, const QString &dropped){
+    RotationNoise rn;
+    avg->rotationNoise = rn;
+    const int N = inputs.size();
+    if (N < 4 || (int)anglesDeg.size() != N || mirrorDlg::get_Instance()->isEllipse())
+        return;
+    for (int i = 0; i < N; ++i)
+        if (inputs[i]->data.size() != avg->data.size())
+            return;
+
+    mirrorDlg *md = mirrorDlg::get_Instance();
+    zernikeProcess &zp = *zernikeProcess::get_Instance();
+
+    // The average and its outer mask, as rotateThese() hands them to rotate().
+    wavefront mirror;
+    mirror.data = avg->data;
+    mirror.m_outside = avg->m_outside;
+    mirror.m_inside = avg->m_inside;
+    makeMask(&mirror, false);
+    cv::Mat_<uint8_t> outerMask = mirror.mask.clone();
+    makeMask(&mirror, true);
+    cv::Mat valid = mirror.mask.clone();
+
+    // rotate(wf, mask, angle) is what counter rotated input i, so -angle
+    // turns the mirror back to where it sat for that measurement.
+    std::vector<cv::Mat> rotMirror(N);
+    cv::Mat stand = cv::Mat::zeros(avg->data.size(), CV_64F);
+    for (int i = 0; i < N; ++i){
+        rotMirror[i] = rotate(&mirror, outerMask, -wrapAngle(anglesDeg[i]));
+        cv::Mat ok;
+        cv::bitwise_and(cv::Mat(inputs[i]->data != 0.), cv::Mat(rotMirror[i] != 0.), ok);
+        cv::bitwise_and(valid, ok, valid);
+        stand += cv::Mat(inputs[i]->data) - rotMirror[i];
+    }
+    stand /= N;
+    if (cv::countNonZero(valid) < 100)
+        return;
+    cv::Mat invalid;
+    cv::bitwise_not(valid, invalid);
+
+    int gaussianRad = 0;
+    if (m_GB_enabled){
+        gaussianRad = 2 * avg->m_outside.m_radius * m_gbValue * .01;
+        gaussianRad &= 0xfffffffe;
+        ++gaussianRad;
+    }
+
+    std::vector<double> rms(N);
+    double sumSq = 0.;
+    for (int i = 0; i < N; ++i){
+        cv::Mat noise = cv::Mat(inputs[i]->data) - rotMirror[i] - stand;
+        // Zero is "no data" to the Zernike fit and the nulling.
+        noise.setTo(0., invalid);
+
+        wavefront t;
+        t.data = noise;
+        t.m_outside = avg->m_outside;
+        t.m_inside = avg->m_inside;
+        t.mask = valid.clone();
+        t.workMask = valid.clone();
+        t.useSANull = false;      // the null is the same in every rotation and is gone
+        zp.unwrap_to_zernikes(t);
+        std::vector<double> z = t.InputZerns;
+        if (m_surfaceTools->m_useDefocus && z.size() > 3)
+            z[3] = m_surfaceTools->m_defocus;   // so the slider does not add defocus to the noise
+        cv::Mat nulled = zp.null_unwrapped(t, z, zernEnables, 0, Z_TERMS);
+        cv::Mat work = nulled;
+        if (gaussianRad > 0){
+            work = nulled.clone();
+            CropGaussianBlur(nulled, work, gaussianRad, t.m_outside, t.m_inside);
+        }
+        cv::Scalar mean, sd;
+        cv::meanStdDev(work, mean, sd, valid);
+        rms[i] = sd.val[0] * md->lambda;
+        sumSq += rms[i] * rms[i];
+    }
+
+    std::vector<double> sorted = rms;
+    std::sort(sorted.begin(), sorted.end());
+    double median = (N % 2) ? sorted[N/2] : 0.5 * (sorted[N/2 - 1] + sorted[N/2]);
+
+    rn.n = N;
+    rn.sigmaNm = sqrt(sumSq / N * N / (N - 2.));
+    rn.floorNm = rn.sigmaNm / sqrt((double)N);
+    cv::Scalar mean, sd;
+    cv::meanStdDev(avg->workData, mean, sd, avg->workMask);
+    rn.rmsNm = sd.val[0] * md->lambda;
+    rn.removed = metricRemovedTerms(m_surfaceTools);
+    rn.blur = m_GB_enabled ? m_gbValue : 0.;
+    rn.dropped = dropped;
+    for (int i = 0; i < N; ++i){
+        rn.angles.push_back(anglesDeg[i]);
+        rn.residualNm.push_back(rms[i]);
+        // A plain residual spread of a few tens of percent is normal; one
+        // and a half times the median means this rotation saw a different
+        // stand or mirror support than the others.
+        rn.deviating.push_back(rms[i] > 1.5 * median);
+    }
+    rn.valid = rn.sigmaNm > 0.;
+    avg->rotationNoise = rn;
+}
+
 void SurfaceManager::computeStandAstig(define_input *wizPage, QList<rotationDef *> list){
     // The old code demanded an exact 90 deg partner for every file and
     // compared doubles with ==, so an entry of 89.5 deg failed outright while
@@ -2952,6 +3127,7 @@ void SurfaceManager::computeStandAstig(define_input *wizPage, QList<rotationDef 
     QApplication::processEvents();
     // Now average all the rotated ones.
     QList<wavefront *> wlist;
+    QList<int> usedRotations;
     QString droppedRotations;
     for (int i = 0; i < rotated.size(); ++i){
         // A rotation whose residual stands out from the rest did not see the
@@ -2967,12 +3143,16 @@ void SurfaceManager::computeStandAstig(define_input *wizPage, QList<rotationDef 
             continue;
         }
         wlist << rotated[i];
+        usedRotations << i;
     }
     if (wlist.size() < 2){
         wlist.clear();
+        usedRotations.clear();
         droppedRotations.clear();
-        for (int i = 0; i < rotated.size(); ++i)
+        for (int i = 0; i < rotated.size(); ++i){
             wlist << rotated[i];
+            usedRotations << i;
+        }
     }
 
     average(wlist);
@@ -2983,6 +3163,25 @@ void SurfaceManager::computeStandAstig(define_input *wizPage, QList<rotationDef 
     emit nameChanged(m_wavefronts[m_currentNdx]->name, QString("AverageStandRemoved"));
     m_standRemoved->name = QString("AverageStandRemoved");
     int avgNdx = m_currentNdx;  // the index of the average
+
+    // How much of the average is measurement noise, from the same rotations
+    // that went into it.
+    wizPage->m_log->append("estimating the noise of the average");
+    QApplication::processEvents();
+    {
+        QList<wavefront *> noiseInputs;
+        std::vector<double> noiseAngles;
+        for (int i : usedRotations){
+            noiseInputs << inputs[i];
+            noiseAngles.push_back(list[i]->angle);
+        }
+        QStringList dropped = droppedRotations.split(" ", Qt::SkipEmptyParts);
+        computeRotationNoise(noiseInputs, noiseAngles, m_standRemoved, dropped.join(","));
+        if (m_standRemoved->rotationNoise.valid)
+            wizPage->m_log->append(QString("noise of one rotation %1 nm, noise floor of the average %2 nm")
+                                   .arg(m_standRemoved->rotationNoise.sigmaNm, 0, 'f', 2)
+                                   .arg(m_standRemoved->rotationNoise.floorNm, 0, 'f', 2));
+    }
 
     QTextEdit *page2 = new QTextEdit;
     page2->resize(600,800);
@@ -3536,6 +3735,62 @@ void SurfaceManager::report(){
             "<td>Waves per fringe: " + QString::number(md->fringeSpacing) + "<br>Interferogram Wave length: "+ QString::number(md->lambda) + "nm</td></tr>"
             "</table></p>";
 
+    // How far the RMS and Strehl above can be trusted: the noise left in a
+    // rotation average, worked out when the average was made.
+    QString accuracy = "<p><br><table border='1' width='100%'><tr><th colspan='2'><h2>Accuracy / reliability</h2></th></tr>";
+    const RotationNoise &rn = wf->rotationNoise;
+    if (!rn.valid){
+        accuracy += "<tr><td colspan='2'>Noise estimate not available: it needs a stand removal "
+                    "(rotation average) of at least 4 rotations.</td></tr>";
+    }
+    else {
+        auto strehl = [](double rmsWaves){ return exp(-pow(2. * M_PI * rmsWaves, 2)); };
+        double rmsNm = wf->std * outputLambda;
+        double floorNm = rn.floorNm;
+        double cleanSq = rmsNm * rmsNm - floorNm * floorNm;
+        auto nmText = [](double nm){
+            return QString("%1 nm (%2 waves at %3 nm)").arg(nm, 0, 'f', 2)
+                    .arg(nm / outputLambda, 0, 'f', 4).arg(outputLambda, 0, 'f', 1);
+        };
+
+        bool stale = rn.removed != metricRemovedTerms(m_surfaceTools)
+                || rn.blur != (m_GB_enabled ? m_gbValue : 0.)
+                || fabs(rmsNm - rn.rmsNm) > qMax(0.02 * rn.rmsNm, 0.05);
+        if (stale)
+            accuracy += QString("<tr><td colspan='2'><font color='red'>The wavefront or the RMS settings changed "
+                                "since this estimate was made (RMS then %1 nm, terms removed then: %2%3). "
+                                "The figures below may not apply.</font></td></tr>")
+                    .arg(rn.rmsNm, 0, 'f', 2).arg(rn.removed.isEmpty() ? QString("none") : rn.removed)
+                    .arg(rn.blur > 0 ? QString(", blur %1%").arg(rn.blur) : QString());
+
+        QString rotations = QString::number(rn.n);
+        if (!rn.dropped.isEmpty())
+            rotations += QString(" (left out of the average by the stand fit: %1 deg)").arg(rn.dropped);
+        accuracy += "<tr><td>Rotations in the average</td><td>" + rotations + "</td></tr>";
+        accuracy += "<tr><td>Noise of one rotation (sigma)</td><td>" + nmText(rn.sigmaNm) + "</td></tr>";
+        accuracy += "<tr><td>Noise floor of the average (sigma / sqrt(N))</td><td>" + nmText(floorNm) + "</td></tr>";
+        accuracy += "<tr><td>Measured RMS / Strehl</td><td>" + nmText(rmsNm) +
+                QString(" / %1").arg(strehl(wf->std), 0, 'f', 4) + "</td></tr>";
+        if (cleanSq > 0){
+            double cleanNm = sqrt(cleanSq);
+            accuracy += "<tr><td>RMS / Strehl with the noise removed</td><td>" + nmText(cleanNm) +
+                    QString(" / %1").arg(strehl(cleanNm / outputLambda), 0, 'f', 4) + "</td></tr>";
+        }
+        else {
+            accuracy += "<tr><td>RMS / Strehl with the noise removed</td><td>The measured RMS is within the noise "
+                        "floor: the surface error cannot be told apart from the noise.</td></tr>";
+        }
+        QStringList deviating;
+        for (size_t i = 0; i < rn.angles.size() && i < rn.residualNm.size() && i < rn.deviating.size(); ++i)
+            if (rn.deviating[i])
+                deviating << QString("%1 deg (%2 nm)").arg(rn.angles[i], 0, 'f', 1).arg(rn.residualNm[i], 0, 'f', 2);
+        accuracy += "<tr><td>Deviating rotations (residual &gt; 1.5 x median)</td><td>" +
+                (deviating.isEmpty() ? QString("none") : deviating.join(", ")) + "</td></tr>";
+        accuracy += "<tr><td colspan='2'><i>Rotation averaging cannot detect rotationally symmetric test errors "
+                    "(Bath reference, null/RoC error).</i></td></tr>";
+    }
+    accuracy += "</table></p>";
+
     // zerenike values
     QString zerns("<p>This is a flat so no zernike values are computed.</p>");
     if (!md->isEllipse()){
@@ -3755,7 +4010,7 @@ void SurfaceManager::report(){
         imagesHtml.append("<table  style=\"page-break-before:always\" border = \"1\"><tr><th>Pixel Histogram and Slope error</th></tr> <tr><td> <img src = '" +
                            pixStat + "'></td></tr></table>");
     }
-    editor->setHtml(title + html +zerns + imagesHtml +  tail);
+    editor->setHtml(title + html + accuracy + zerns + imagesHtml +  tail);
     editor->print(&printer);
     if (dlg.ui->showPDF->isChecked()){
         QDesktopServices::openUrl(QUrl::fromLocalFile(dlg.fileName));

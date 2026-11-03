@@ -59,5 +59,6 @@ wavefront::wavefront( const wavefront &wf):
     gbEnabled(wf.gbEnabled),
     wasSmoothed(wf.wasSmoothed),
     useSANull(wf.useSANull),
-    m_manuallyInverted(wf.m_manuallyInverted)
+    m_manuallyInverted(wf.m_manuallyInverted),
+    rotationNoise(wf.rotationNoise)
 {}
