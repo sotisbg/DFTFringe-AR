@@ -3056,9 +3056,10 @@ void SurfaceManager::computeRotationNoise(const QList<wavefront *> &inputs, cons
 // were a typical one (median residual) and the Strehl that would give.  The
 // surface itself is taken as sqrt(rms^2 - floor^2) and the floor added back
 // on, so the Strehl is what the next measurement would be expected to show.
-// Worth measuring again: far out (2.5 x the median: something was different
-// that time), the Strehl moves by 0.001 or more (the third decimal) or the
-// RMS falls by 10 % or more.
+// Worth measuring again only when far out (2.5 x the median: something was
+// different that time).  A merely noticeable rotation is left alone: on
+// AR2615 measuring 0 and 180 deg (1.6x, 2.0x) again would have moved the
+// Strehl by less than 0.001, and leaving them out did more harm than good.
 struct RotationDeviation {
     double angle, residualNm, ratio, addsNm, floorIfTypicalNm, rmsIfTypicalNm, strehlIfTypical;
     bool worth;
@@ -3086,8 +3087,7 @@ static std::vector<RotationDeviation> rotationDeviations(const RotationNoise &rn
         d.floorIfTypicalNm = sqrt(qMax(0., sumSq - d.residualNm * d.residualNm + med * med) / (N - 2.)) / sqrt((double)N);
         d.rmsIfTypicalNm = sqrt(surfaceSq + d.floorIfTypicalNm * d.floorIfTypicalNm);
         d.strehlIfTypical = strehlOfNm(d.rmsIfTypicalNm);
-        d.worth = d.ratio >= 2.5 || d.strehlIfTypical - strehlNow >= 0.001
-                || d.rmsIfTypicalNm <= 0.9 * rn.rmsNm;
+        d.worth = d.ratio >= 2.5;
         out.push_back(d);
     }
     return out;
@@ -3113,8 +3113,8 @@ static QString rotationDeviationTable(const RotationNoise &rn){
                         "A rotation up to 1.5 x the median is normal scatter, 1.5 - 2.5 x noticeable, above "
                         "2.5 x far out (something was different that time: the mirror sat differently, "
                         "was not settled, vibration). The \"if typical\" columns are what measuring that "
-                        "rotation again would gain at best. Worth it when the rotation is far out, the "
-                        "Strehl would move by 0.001 or more, or the RMS would fall by 10% or more.</p>"
+                        "rotation again would gain at best. Measuring again is advised only for a rotation "
+                        "that is far out.</p>"
                         "<table border='1' cellspacing='2' cellpadding='2'>"
                         "<tr><td><b>rotation</b></td><td><b>residual, nm</b></td><td><b>x median</b></td>"
                         "<td><b>adds to the average, nm</b></td><td><b>noise floor if typical, nm</b></td>"
@@ -3365,11 +3365,8 @@ void SurfaceManager::computeStandAstig(define_input *wizPage, QList<rotationDef 
         // more: on AR2615 leaving out 0 and 180 deg of a balanced 8 rotation
         // set made the result worse (their errors partly cancelled, the set
         // lost its balance, the noise floor fell only 5%).  The wizard says
-        // which rotations to measure again; the user decides.
-        if (sfit.valid && i < (int)sfit.suspect.size() && sfit.suspect[i])
-            wizPage->m_log->append(QString("Rotation %1 does not agree with the others, worth measuring again: residual %2 waves")
-                                   .arg(list[i]->angle, 0, 'f', 1)
-                                   .arg(sfit.residual[i], 0, 'f', 4));
+        // which rotations to measure again (only far out ones, see
+        // rotationDeviations()); the user decides.
         wlist << rotated[i];
         usedRotations << i;
     }
@@ -3501,20 +3498,20 @@ void SurfaceManager::computeStandAstig(define_input *wizPage, QList<rotationDef 
                      "<table border='1' cellspacing='2' cellpadding='2' width='70%'>"
                      "<tr><td><b>rotation</b></td><td><b>residual, waves</b></td>"
                      "<td><b>astig residual</b></td><td><b>used</b></td></tr>");
+        // Advice to measure again only for a far out rotation, judged on the
+        // noise residuals (rotationDeviations()); every rotation is used.
+        // <!--w-->..<!--/w--> is shown in the wizard only, <!--p-->..<!--/p-->
+        // in the printed report only (see where fhtml is finished).
+        double strehlNowDev = 0.;
+        const std::vector<RotationDeviation> devs = rotationDeviations(m_standRemoved->rotationNoise, strehlNowDev);
         QString repeatThese;
         for (int i = 0; i < sfit.n && i < list.size(); ++i){
-            const bool dropped = false;   // nothing is left out automatically, see above
-            // A rotation left out is always a suspect too: say both, it used to
-            // read as if nothing more were to be done about it.
-            // <!--w-->..<!--/w--> is shown in the wizard only, <!--p-->..<!--/p-->
-            // in the printed report only (see where fhtml is finished).
-            QString verdict = dropped ? "left out of the average<!--w-->, <b>measure again</b><!--/w-->"
-                                      : (sfit.suspect[i] ? "<!--w--><b>measure again</b><!--/w--><!--p-->yes<!--/p-->"
-                                                         : "yes");
-            if (sfit.suspect[i])
-                repeatThese += QString("%1 deg (residual %2) ")
+            const bool farOut = (int)devs.size() == sfit.n && devs[i].worth;
+            QString verdict = farOut ? "<!--w--><b>measure again</b><!--/w--><!--p-->yes<!--/p-->" : "yes";
+            if (farOut)
+                repeatThese += QString("%1 deg (%2 x the median) ")
                                .arg(list[i]->angle, 0, 'f', 1)
-                               .arg(sfit.residual[i], 0, 'f', 4);
+                               .arg(devs[i].ratio, 0, 'f', 1);
             fhtml.append(QString("<tr><td>%1</td><td>%2</td><td>%3</td><td>%4</td></tr>")
                          .arg(list[i]->angle, 0, 'f', 1)
                          .arg(sfit.residual[i], 0, 'f', 4)
@@ -3529,16 +3526,13 @@ void SurfaceManager::computeStandAstig(define_input *wizPage, QList<rotationDef 
         }
         if (!repeatThese.isEmpty()){
             fhtml.append(QString("<!--w--><p><b>Worth measuring again: %1</b><br>"
-                                 "These rotations do not agree with the rest about what the stand was "
-                                 "doing. Either the mirror sat differently on the supports that time, "
-                                 "or the measurement itself was disturbed. Repeating them costs less "
-                                 "than adding rotations: the error of the result falls only as the "
-                                 "square root of their number, while one bad rotation moves it "
-                                 "outright.</p><!--/w-->").arg(repeatThese));
+                                 "These rotations are far out from the rest: either the mirror sat "
+                                 "differently on the supports that time, or the measurement itself was "
+                                 "disturbed. Measure them again rather than leave them out - leaving "
+                                 "one out breaks the balance of the angle set.</p><!--/w-->").arg(repeatThese));
         }
         else if (sfit.n >= 3){
-            fhtml.append("<p>No rotation stands out - as far as this test can tell, the stand did "
-                         "the same thing every time.</p>");
+            fhtml.append("<p>No rotation is far out from the others: none needs measuring again.</p>");
         }
 
         // ---- what this set of angles can and cannot do ----------------
