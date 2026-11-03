@@ -4076,7 +4076,7 @@ void SurfaceManager::report(){
             // gives it - but only when the estimate applies to this wavefront.
             // mStrehl's text leaves its big <FONT> open, hence the </font>.
             if (!stale)
-                strehlRange = QString("</font><br><font size='3'>(with noise removed, no smoothing: %1 - %2)</font>")
+                strehlRange = QString("</font><br><font size='3'>(with noise removed: %1 - %2)</font>")
                         .arg(strehlLo, 0, 'f', 3).arg(strehlHi, 0, 'f', 3);
         }
         else {
