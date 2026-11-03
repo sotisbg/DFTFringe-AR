@@ -138,6 +138,8 @@ private:
                    contourView *contourView = 0, SurfaceGraph *glPlot = 0, metricsDisplay *mets = 0);
     textres Phase2(QList<rotationDef *> list, QList<wavefront *> inputs, int avgNdx, int Width, QPrinter &printer);
     void changeWavelength(wavefront *wf, double wavelength);
+    void computeRotationNoise(const QList<wavefront *> &inputs, const std::vector<double> &anglesDeg,
+                              wavefront *avg, const QString &dropped);
     void flipHorizontal(wavefront *wf);
     void flipVertical(wavefront *wf);
 
