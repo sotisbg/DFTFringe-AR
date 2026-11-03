@@ -3126,7 +3126,8 @@ static QString rotationDeviationTable(const RotationNoise &rn){
         QString how = (d.ratio < 1.5) ? QString("normal")
                     : (d.ratio < 2.5) ? QString("noticeable")
                                       : QString("<font color='red'>far out</font>");
-        QString advice = d.worth ? QString("<b>worth it</b>") : QString("not needed");
+        QString advice = d.worth ? QString("<b>worth measuring again</b>")
+                                 : QString("no need to measure again");
         t += QString("<tr><td>%1</td><td>%2</td><td>%3 (%4)</td><td>%5</td><td>%6</td><td>%7 (%8%)</td>"
                      "<td>%9 (%10%11)</td><td>%12</td></tr>")
                 .arg(d.angle, 0, 'f', 1).arg(d.residualNm, 0, 'f', 2).arg(d.ratio, 0, 'f', 2).arg(how)
@@ -3417,7 +3418,7 @@ void SurfaceManager::computeStandAstig(define_input *wizPage, QList<rotationDef 
                                        .arg(d.angle, 0, 'f', 1).arg(d.residualNm, 0, 'f', 2).arg(d.ratio, 0, 'f', 2)
                                        .arg(rn.floorNm, 0, 'f', 2).arg(d.floorIfTypicalNm, 0, 'f', 2)
                                        .arg(strehlNow, 0, 'f', 4).arg(d.strehlIfTypical, 0, 'f', 4)
-                                       .arg(d.worth ? "worth measuring again" : "not needed"));
+                                       .arg(d.worth ? "worth measuring again" : "no need to measure again"));
             }
         }
     }
