@@ -219,7 +219,11 @@ StandFit fitStandZernikes(const std::vector<double> &anglesDeg,
             const bool far = (z > 2.5) || (med > 1e-9 && fit.residual[i] > 2.0 * med);
             if (far)
                 fit.suspect[i] = true;
-            if (N >= 5 && z > 3.5)
+            // Leaving a rotation out also needs it to be well beyond the
+            // others in absolute terms: when the good rotations agree very
+            // closely the MAD is tiny and the z score alone threw out
+            // rotations only 1.6x the median.
+            if (N >= 5 && z > 3.5 && med > 1e-9 && fit.residual[i] > 2.0 * med)
                 fit.outlier[i] = true;
         }
     }
