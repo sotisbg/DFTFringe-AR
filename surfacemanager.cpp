@@ -3940,10 +3940,9 @@ void SurfaceManager::report(){
                                 "The figures below may not apply.</font></td></tr>")
                     .arg(refRmsNm, 0, 'f', 2).arg(rn.removed.isEmpty() ? QString("none") : rn.removed);
 
-        QString rotations = QString::number(rn.n);
-        if (!rn.dropped.isEmpty())
-            rotations += QString(" (left out of the average by the stand fit: %1 deg)").arg(rn.dropped);
-        accuracy += "<tr><td>Rotations in the average</td><td>" + rotations + "</td></tr>";
+        accuracy += "<tr><td>Rotations in the average</td><td>" + QString::number(rn.n) + "</td></tr>";
+        accuracy += "<tr><td>Rotations left out of the average</td><td>" +
+                (rn.dropped.isEmpty() ? QString("none") : rn.dropped + " deg") + "</td></tr>";
         accuracy += "<tr><td>Smoothing</td><td>" + smoothing + "</td></tr>";
         accuracy += "<tr><td>Noise of one rotation (sigma)</td><td>" + nmText(sigmaNm) + "</td></tr>";
         accuracy += "<tr><td>Noise floor of the average (sigma / sqrt(N))</td><td>" + nmText(floorNm) + "</td></tr>";
@@ -3958,12 +3957,6 @@ void SurfaceManager::report(){
             accuracy += "<tr><td>RMS / Strehl with the noise removed</td><td>The measured RMS is within the noise "
                         "floor: the surface error cannot be told apart from the noise.</td></tr>";
         }
-        QStringList deviating;
-        for (size_t i = 0; i < rn.angles.size() && i < rn.residualNm.size() && i < rn.deviating.size(); ++i)
-            if (rn.deviating[i])
-                deviating << QString("%1 deg (%2 nm)").arg(rn.angles[i], 0, 'f', 1).arg(rn.residualNm[i], 0, 'f', 2);
-        accuracy += "<tr><td>Deviating rotations (residual &gt; 1.5 x median)</td><td>" +
-                (deviating.isEmpty() ? QString("none") : deviating.join(", ")) + "</td></tr>";
         accuracy += "<tr><td colspan='2'><i>Rotation averaging cannot detect rotationally symmetric test errors "
                     "(Bath reference, null/RoC error).</i></td></tr>";
     }
