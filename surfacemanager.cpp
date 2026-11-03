@@ -62,6 +62,7 @@
 #include <QTabWidget>
 #include <QPrintDialog>
 #include <QSplitter>
+#include <QLayout>
 #include "settingsGeneral2.h"
 #include "foucaultview.h"
 #include "myutils.h"
@@ -4086,23 +4087,25 @@ void SurfaceManager::report(){
         // at its natural (already correctly sized) resolution instead.
         oglw.getLegend()->setPixmap(QPixmap::fromImage(legend));
         oglw.getModel()->setPixmap(QPixmap::fromImage(SurfaceImage));
+        // Keep the model label at the full render size. Otherwise show() clamps the
+        // never-resized window to 2/3 of the screen (less with Windows display
+        // scaling), the label shrinks and only the top of the 3D view is kept.
+        oglw.getModel()->setFixedSize(SurfaceImage.size() / SurfaceImage.devicePixelRatio());
+        oglw.setAttribute(Qt::WA_DontShowOnScreen);
+        oglw.layout()->activate();
+        oglw.resize(oglw.sizeHint());
         oglw.show();    // show on stack to get metrics.
-        // Use the caption's actual font here, not the widget's default one - this
-        // reserves enough width for "Waves at 550nm" in the font it's really drawn
-        // in, instead of clipping it.
-        QFontMetrics fm(oglw.ui->Title->font());
-        QRect tw = fm.boundingRect("Waves 550 nm Waves");
-        QRect sg = oglw.getModel()->geometry();
 
-        // The right-hand column is as wide as its widest content: the caption
-        // text or the legend pixmap (now left at its natural, correctly-sized
-        // width instead of being squashed - see above). Reserving only the
-        // caption's width here cut the legend off.
-        int surfw = sg.width() + qMax(tw.width(), lsize.width());
-        int surfh = sg.height();
-        QImage surfaceandLegend(surfw,surfh, QImage::Format_ARGB32);
+        // Grab the whole window (title row + model + caption + legend) rather than
+        // model width + caption/legend width by model height: that left out the
+        // title row, so the bottom of the model was cut, and any part of the
+        // (uninitialized) image the window didn't cover showed as garbage pixels
+        // right of the legend. Fill it first so nothing undefined can show through.
+        QImage surfaceandLegend(oglw.size(), QImage::Format_ARGB32);
+        surfaceandLegend.fill(Qt::white);
         QPainter painterSurfaceandLegend(&surfaceandLegend);
         oglw.render(&painterSurfaceandLegend);
+        painterSurfaceandLegend.end();
         QString surfPath("mydata://surface.png");
         doc->addResource(QTextDocument::ImageResource,  QUrl(surfPath),
                          QVariant(surfaceandLegend.scaledToWidth(dlg.surfaceWidth * finalWidth, Qt::SmoothTransformation)));
