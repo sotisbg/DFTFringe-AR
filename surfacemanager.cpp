@@ -4089,8 +4089,16 @@ void SurfaceManager::report(){
                 deviating << QString("%1 deg (%2 nm)").arg(rn.angles[i], 0, 'f', 1).arg(rn.residualNm[i], 0, 'f', 2);
         accuracy += "<tr><td>Deviating rotations (residual &gt; 1.5 x median)</td><td>" +
                 (deviating.isEmpty() ? QString("none") : deviating.join(", ")) + "</td></tr>";
-        accuracy += "<tr><td colspan='2'><i>Rotation averaging cannot detect rotationally symmetric test errors "
-                    "(Bath reference, null/RoC error).</i></td></tr>";
+        // What the range does and does not stand for.  Nothing is assumed:
+        // errors no measurement here can see are named, not given a number.
+        accuracy += QString("<tr><td>Included in the range</td><td>The noise of the separate measurements, "
+                            "the mirror sitting differently on its support each time included, and how "
+                            "well that noise is known from %1 rotations (+/- %2%). Test errors fixed in the "
+                            "lab that are not rotationally symmetric are removed with the stand.</td></tr>")
+                .arg(rn.n).arg(100. / sqrt(2. * qMax(1, rn.n - 2)), 0, 'f', 0);
+        accuracy += "<tr><td>Not included</td><td><i>Rotationally symmetric test errors (Bath reference, "
+                    "null/RoC error): rotation averaging cannot detect them. Repeatability between "
+                    "sessions on different days (temperature, alignment) was not measured.</i></td></tr>";
     }
     accuracy += "</table></p>";
     html.replace("%STREHL_RANGE%", strehlRange);
