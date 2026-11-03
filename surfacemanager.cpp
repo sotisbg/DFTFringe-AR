@@ -3269,17 +3269,11 @@ void SurfaceManager::computeStandAstig(define_input *wizPage, QList<rotationDef 
     QString droppedRotations;
     for (int i = 0; i < rotated.size(); ++i){
         // A rotation whose residual stands out from the rest did not see the
-        // same stand as the others.  Averaging it in spreads its error over
-        // the result with full weight 1/N, so it is left out - but only when
-        // enough rotations remain for the fit to still mean something.
-        if (sfit.valid && i < (int)sfit.outlier.size() && sfit.outlier[i]
-                && rotated.size() >= 5){
-            droppedRotations += QString("%1 ").arg(list[i]->angle, 0, 'f', 1);
-            wizPage->m_log->append(QString("Rotation %1 left out of the average, measure it again: residual %2 waves")
-                                   .arg(list[i]->angle, 0, 'f', 1)
-                                   .arg(sfit.residual[i], 0, 'f', 4));
-            continue;
-        }
+        // same stand as the others.  It is NOT left out automatically any
+        // more: on AR2615 leaving out 0 and 180 deg of a balanced 8 rotation
+        // set made the result worse (their errors partly cancelled, the set
+        // lost its balance, the noise floor fell only 5%).  The wizard says
+        // which rotations to measure again; the user decides.
         if (sfit.valid && i < (int)sfit.suspect.size() && sfit.suspect[i])
             wizPage->m_log->append(QString("Rotation %1 does not agree with the others, worth measuring again: residual %2 waves")
                                    .arg(list[i]->angle, 0, 'f', 1)
@@ -3405,7 +3399,7 @@ void SurfaceManager::computeStandAstig(define_input *wizPage, QList<rotationDef 
                      "<td><b>astig residual</b></td><td><b>used</b></td></tr>");
         QString repeatThese;
         for (int i = 0; i < sfit.n && i < list.size(); ++i){
-            bool dropped = sfit.outlier[i] && rotated.size() >= 5;
+            const bool dropped = false;   // nothing is left out automatically, see above
             // A rotation left out is always a suspect too: say both, it used to
             // read as if nothing more were to be done about it.
             // <!--w-->..<!--/w--> is shown in the wizard only, <!--p-->..<!--/p-->
