@@ -2266,6 +2266,16 @@ static qreal reportImageDpi(){
     return screen ? qRound(screen->logicalDotsPerInchY()) : 96.;
 }
 
+// Scale a report image to the given width, or down to maxHeight when that would
+// make it taller: QTextDocument cannot keep an image taller than the page on one
+// page and prints it cut in two across a page break.
+static QImage fitReportImage(const QImage &img, double width, int maxHeight){
+    QImage out = img.scaledToWidth(qRound(width), Qt::SmoothTransformation);
+    if (out.height() > maxHeight)
+        out = img.scaledToHeight(maxHeight, Qt::SmoothTransformation);
+    return out;
+}
+
 int getImageSize(QPrinter &printer){
     qreal screenDPI = reportImageDpi();
 
@@ -3946,6 +3956,10 @@ void SurfaceManager::report(){
     double pageWidthIn = printer.pageLayout().pageSize().size(QPageSize::Inch).width();
     double textWidthIn = pageWidthIn - 2 * 2 / 2.54;
     int finalWidth = qRound(textWidthIn * reportImageDpi());
+    // Tallest an image may be: the text height less room for a caption or table
+    // header on the same page.
+    double pageHeightIn = printer.pageLayout().pageSize().size(QPageSize::Inch).height();
+    int maxImageHeight = qRound(0.9 * (pageHeightIn - 2 * 2 / 2.54) * reportImageDpi());
 
     printer.setFullPage( true );
 
@@ -4197,7 +4211,10 @@ void SurfaceManager::report(){
     // add surface 3D graph
     QString imagesHtml;
 
-    //get the profile plot image
+    // Every image goes in a paragraph of its own.  A bare <img> after a
+   // "<p><br>&nbsp;</p>" spacer was laid out on one page but printed at the top
+   // of the next, leaving an image-sized blank gap after every picture.
+   //get the profile plot image
    if (dlg.ui->showProfile->isChecked()){
        QImage profile = QImage(m_profilePlot->size(),QImage::Format_ARGB32);
        QPainter p2(&profile);
@@ -4205,9 +4222,8 @@ void SurfaceManager::report(){
 
          QString review("mydata://review.png");
          doc->addResource(QTextDocument::ImageResource,  QUrl(review),
-              QVariant(profile.scaledToWidth(dlg.profileWidth * finalWidth , Qt::SmoothTransformation)));
-             imagesHtml.append("<br>");
-             imagesHtml.append("<img src='" + review + "'>");
+              QVariant(fitReportImage(profile, dlg.profileWidth * finalWidth, maxImageHeight)));
+             imagesHtml.append("<p style='margin-top:12px'><img src='" + review + "'></p>");
    }
 
    // get the contour plot image
@@ -4220,9 +4236,8 @@ void SurfaceManager::report(){
 
        QString contour("mydata://contour.png");
        doc->addResource(QTextDocument::ImageResource,  QUrl(contour),
-            QVariant(contourImg.scaledToWidth(dlg.contourWidth * finalWidth, Qt::SmoothTransformation)));
-       imagesHtml.append("<p ><br>&nbsp;</p>");
-       imagesHtml.append("<img src='" + contour + "'>");
+            QVariant(fitReportImage(contourImg, dlg.contourWidth * finalWidth, maxImageHeight)));
+       imagesHtml.append("<p style='margin-top:12px'><img src='" + contour + "'></p>");
    }
 
     // 3D Surface
@@ -4265,9 +4280,8 @@ void SurfaceManager::report(){
         painterSurfaceandLegend.end();
         QString surfPath("mydata://surface.png");
         doc->addResource(QTextDocument::ImageResource,  QUrl(surfPath),
-                         QVariant(surfaceandLegend.scaledToWidth(dlg.surfaceWidth * finalWidth, Qt::SmoothTransformation)));
-        imagesHtml.append("<p ><br>&nbsp;</p>");
-        imagesHtml.append("<img src='" + surfPath + "'>");
+                         QVariant(fitReportImage(surfaceandLegend, dlg.surfaceWidth * finalWidth, maxImageHeight)));
+        imagesHtml.append("<p style='margin-top:12px'><img src='" + surfPath + "'></p>");
     }
     // star test
     if (dlg.ui->showStarTest->isChecked()){
@@ -4287,10 +4301,8 @@ void SurfaceManager::report(){
             sv->render(&p3);
             QString svpng("mydata://sv.png");
             doc->addResource(QTextDocument::ImageResource,  QUrl(svpng),
-                  QVariant(svImage.scaledToWidth(dlg.startestWidth * finalWidth,
-                                                 Qt::SmoothTransformation)));
-                imagesHtml.append("<p ><br>&nbsp;</p>");
-                imagesHtml.append(" <img src='" +svpng + "'>");
+                  QVariant(fitReportImage(svImage, dlg.startestWidth * finalWidth, maxImageHeight)));
+                imagesHtml.append("<p style='margin-top:12px'><img src='" + svpng + "'></p>");
                 imagesHtml.append("<h2>Star test simulation (defocused, in and out of focus) and PSF/MTF plots from analysis data.</h2>");
         }
     }
@@ -4307,7 +4319,7 @@ void SurfaceManager::report(){
 
         QString fvpng("mydata://fv.png");
         doc->addResource(QTextDocument::ImageResource,  QUrl(fvpng),
-                         QVariant((*fvImage).scaledToWidth(dlg.ronchiWidth * finalWidth)));
+                         QVariant(fitReportImage(*fvImage, dlg.ronchiWidth * finalWidth, maxImageHeight)));
 
         // Keep the image on the same page as its own caption instead of letting it
         // fall wherever the previous section's flow happens to end.
@@ -4326,8 +4338,7 @@ void SurfaceManager::report(){
 
         QString sigram("mydata://igram.png");
         doc->addResource(QTextDocument::ImageResource,  QUrl(sigram),
-                         QVariant(igram.scaledToWidth(dlg.igramWidth * finalWidth,
-                                                      Qt::SmoothTransformation)));
+                         QVariant(fitReportImage(igram, dlg.igramWidth * finalWidth, maxImageHeight)));
         imagesHtml.append("<table  style=\"page-break-before:always\" border = \"1\"><tr><th>typical interferogram</th></tr> <tr><td> <img src='" +
                            sigram + "'></td></tr></table><br>");
     }
@@ -4336,8 +4347,8 @@ void SurfaceManager::report(){
         QImage pixStats = m_contourView->getPixstatsImage();
         QString pixStat("mydata://pixStat.png");
         doc->addResource(QTextDocument::ImageResource, QUrl(pixStat),
-                         QVariant(pixStats.scaledToWidth(dlg.histoWidth * finalWidth,
-                                                          Qt::SmoothTransformation)));
+                         // At full width it is taller than the text height and fills the last page.
+                         QVariant(fitReportImage(pixStats, 0.7 * dlg.histoWidth * finalWidth, maxImageHeight)));
         imagesHtml.append("<table  style=\"page-break-before:always\" border = \"1\"><tr><th>Pixel Histogram and Slope error</th></tr> <tr><td> <img src = '" +
                            pixStat + "'></td></tr></table>");
     }
