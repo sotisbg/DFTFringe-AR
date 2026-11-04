@@ -2253,10 +2253,21 @@ void plotlineThruAstigs(QwtPlot *plt, cv::Mat xastig, cv::Mat yastig, const QLis
 
 }
 
-int getImageSize(QPrinter &printer){
+// The DPI QTextDocument assumes for an image's pixels when it prints: it lays an
+// image out at pixels * printerDpi / qt_defaultDpi(), and qt_defaultDpi() is the
+// primary screen's logical DPI (96 at 100% Windows scaling, 120 at 125%, 144 at
+// 150%).  Images sized in these pixels come out the same physical size in the PDF
+// whatever screen made them.  The monitor's physical DPI, or a fixed 96, made the
+// report images grow or shrink with the screen, up to running off the page.
+static qreal reportImageDpi(){
+    if (QCoreApplication::testAttribute(Qt::AA_Use96Dpi))
+        return 96.;
     QScreen *screen = QGuiApplication::primaryScreen();
+    return screen ? qRound(screen->logicalDotsPerInchY()) : 96.;
+}
 
-    qreal screenDPI = screen->physicalDotsPerInchX();
+int getImageSize(QPrinter &printer){
+    qreal screenDPI = reportImageDpi();
 
     int Width;
 
@@ -3928,8 +3939,13 @@ void SurfaceManager::report(){
     // Size report images off the PDF page itself, not the screen that happens to be
     // generating it - the old screen-width-based figure meant the same report came
     // out with differently sized images depending on which monitor/machine ran it.
-    double pageWidthPt = printer.pageLayout().pageSize().size(QPageSize::Point).width();
-    int finalWidth = qRound(pageWidthPt * 96.0 / 72.0);
+    // A width of 1 is the text width: the page less the 2 cm margins that
+    // QTextDocument::print() puts on each side.  It has to be in reportImageDpi()
+    // pixels - a fixed 96 made a width-1 image the whole paper wide at 100% Windows
+    // scaling (off the page) and smaller at 125%/150%.
+    double pageWidthIn = printer.pageLayout().pageSize().size(QPageSize::Inch).width();
+    double textWidthIn = pageWidthIn - 2 * 2 / 2.54;
+    int finalWidth = qRound(textWidthIn * reportImageDpi());
 
     printer.setFullPage( true );
 
