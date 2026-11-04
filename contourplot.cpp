@@ -505,7 +505,7 @@ void ContourPlot::drawProfileLine(const double angle){
 
     QwtPlotShapeItem *itemb = new QwtPlotShapeItem( "");
     itemb->setShape(radials);
-    itemb->setPen(QColor(250,250,250,100),10);
+    itemb->setPen(QColor(250,250,250,100),5);
     itemb->setBrush(QBrush(QColor(255,255,255)));
     itemb->attach(this);
     item->attach(this);
