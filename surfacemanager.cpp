@@ -4210,6 +4210,12 @@ void SurfaceManager::report(){
 //    myLabel2->show();
     // add surface 3D graph
     QString imagesHtml;
+    // The first image follows the Zernike table directly and needs more room above
+    // it than the gap between two images, or it looks stuck to the table.
+    auto imagePara = [&imagesHtml](const QString &src){
+        return QString("<p style='margin-top:%1px'><img src='%2'></p>")
+            .arg(imagesHtml.isEmpty() ? 30 : 12).arg(src);
+    };
 
     // Every image goes in a paragraph of its own.  A bare <img> after a
    // "<p><br>&nbsp;</p>" spacer was laid out on one page but printed at the top
@@ -4223,7 +4229,7 @@ void SurfaceManager::report(){
          QString review("mydata://review.png");
          doc->addResource(QTextDocument::ImageResource,  QUrl(review),
               QVariant(fitReportImage(profile, dlg.profileWidth * finalWidth, maxImageHeight)));
-             imagesHtml.append("<p style='margin-top:12px'><img src='" + review + "'></p>");
+             imagesHtml.append(imagePara(review));
    }
 
    // get the contour plot image
@@ -4237,7 +4243,7 @@ void SurfaceManager::report(){
        QString contour("mydata://contour.png");
        doc->addResource(QTextDocument::ImageResource,  QUrl(contour),
             QVariant(fitReportImage(contourImg, dlg.contourWidth * finalWidth, maxImageHeight)));
-       imagesHtml.append("<p style='margin-top:12px'><img src='" + contour + "'></p>");
+       imagesHtml.append(imagePara(contour));
    }
 
     // 3D Surface
@@ -4281,7 +4287,7 @@ void SurfaceManager::report(){
         QString surfPath("mydata://surface.png");
         doc->addResource(QTextDocument::ImageResource,  QUrl(surfPath),
                          QVariant(fitReportImage(surfaceandLegend, dlg.surfaceWidth * finalWidth, maxImageHeight)));
-        imagesHtml.append("<p style='margin-top:12px'><img src='" + surfPath + "'></p>");
+        imagesHtml.append(imagePara(surfPath));
     }
     // star test
     if (dlg.ui->showStarTest->isChecked()){
@@ -4302,7 +4308,7 @@ void SurfaceManager::report(){
             QString svpng("mydata://sv.png");
             doc->addResource(QTextDocument::ImageResource,  QUrl(svpng),
                   QVariant(fitReportImage(svImage, dlg.startestWidth * finalWidth, maxImageHeight)));
-                imagesHtml.append("<p style='margin-top:12px'><img src='" + svpng + "'></p>");
+                imagesHtml.append(imagePara(svpng));
                 imagesHtml.append("<h2>Star test simulation (defocused, in and out of focus) and PSF/MTF plots from analysis data.</h2>");
         }
     }

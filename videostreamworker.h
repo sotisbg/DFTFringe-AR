@@ -44,6 +44,7 @@ signals:
 
 private:
     void captureLoop();
+    void openSource();  // caller holds m_controlMutex
 
     QString m_source;
     cv::VideoCapture m_cap;

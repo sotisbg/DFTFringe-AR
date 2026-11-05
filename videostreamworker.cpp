@@ -11,19 +11,14 @@ VideoStreamWorker::~VideoStreamWorker() {
     stop();
 }
 
-void VideoStreamWorker::startStream() {
-    QMutexLocker locker(&m_controlMutex);
-
-    if (m_running) return;
-
+// Open m_source: a number is a local camera, anything else a URL.  A URL is opened
+// with the FFMPEG backend only.  Left to CAP_ANY, OpenCV falls through to CAP_IMAGES
+// when the stream cannot be reached, which raises "can't find starting number";
+// our cv::redirectError handler (main.cpp) aborts on any cv error, so that crashed
+// the program instead of reporting a failed connection.
+void VideoStreamWorker::openSource() {
     bool isInt = false;
     int camId = m_source.toInt(&isInt);
-    qputenv("OPENCV_FFMPEG_CAPTURE_OPTIONS", "stimeout;2000000;");
-
-    if (m_cap.isOpened()) {
-        m_cap.release();
-    }
-
     if (isInt) {
 #if defined(_WIN32) || defined(_WIN64)
         m_cap.open(camId, cv::CAP_DSHOW);
@@ -31,8 +26,22 @@ void VideoStreamWorker::startStream() {
         m_cap.open(camId);
 #endif
     } else {
-        m_cap.open(m_source.toStdString());
+        m_cap.open(m_source.toStdString(), cv::CAP_FFMPEG);
     }
+}
+
+void VideoStreamWorker::startStream() {
+    QMutexLocker locker(&m_controlMutex);
+
+    if (m_running) return;
+
+    qputenv("OPENCV_FFMPEG_CAPTURE_OPTIONS", "stimeout;2000000;");
+
+    if (m_cap.isOpened()) {
+        m_cap.release();
+    }
+
+    openSource();
 
     if (!m_cap.isOpened()) {
         emit streamError("Failed to open stream source: " + m_source);
@@ -87,18 +96,7 @@ void VideoStreamWorker::captureLoop() {
             {
                 QMutexLocker locker2(&m_controlMutex);
                 m_cap.release();
-                bool isInt = false;
-                int camId = m_source.toInt(&isInt);
-                m_source.toInt(&isInt);
-                if (isInt) {
-                    #if defined(_WIN32) || defined(_WIN64)
-                    m_cap.open(camId, cv::CAP_DSHOW);
-                    #else
-                    m_cap.open(camId);
-                    #endif
-                } else {
-                    m_cap.open(m_source.toStdString());
-                }
+                openSource();
             }
             if (m_cap.isOpened()) {
                 setResolution(savedResolutionWidth, savedResolutionHeight);
