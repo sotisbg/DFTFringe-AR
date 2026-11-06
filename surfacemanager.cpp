@@ -4211,10 +4211,15 @@ void SurfaceManager::report(){
     // add surface 3D graph
     QString imagesHtml;
     // The first image follows the Zernike table directly and needs more room above
-    // it than the gap between two images, or it looks stuck to the table.
+    // it than the gap between two images, or it looks stuck to the table.  Qt 5
+    // drops the top margin of a block that follows a table (margin-top:30px gave
+    // only ~6pt in the PDF), so the room comes from an empty line of large text,
+    // which every Qt version lays out at its full height.
     auto imagePara = [&imagesHtml](const QString &src){
-        return QString("<p style='margin-top:%1px'><img src='%2'></p>")
-            .arg(imagesHtml.isEmpty() ? 30 : 12).arg(src);
+        QString spacer = imagesHtml.isEmpty()
+            ? QString("<p style='margin-top:0px; margin-bottom:0px; font-size:20pt'>&nbsp;</p>")
+            : QString();
+        return spacer + QString("<p style='margin-top:12px'><img src='%1'></p>").arg(src);
     };
 
     // Every image goes in a paragraph of its own.  A bare <img> after a
