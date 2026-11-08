@@ -492,6 +492,90 @@ struct Check {
     QString hint;
 };
 
+// --- Absolute criterion: how much Strehl at 550 nm the uncertainty of this
+// direction could cost.  The direction is judged on its own; averaging it with
+// other rotations of the mirror can only make the error smaller.
+
+const double kStrehlLambda = 550.;   // nm, visual
+const double kStrehlOk = 0.02, kStrehlBorder = 0.05;
+// rms^2 of DFTFringe's Zernike terms 4..10 over the unit disc (unnormalised polynomials)
+const double kTermRms2[7] = {1. / 6, 1. / 6, 1. / 8, 1. / 8, 1. / 5, 1. / 8, 1. / 8};
+
+// 2 sigma rms wavefront uncertainty of the low-order terms, nm.
+double lowOrderUnc(const std::vector<double> &se, int first = 0, int last = 6){
+    double s = 0.;
+    for (int i = first; i <= last && i < (int)se.size(); ++i)
+        s += se[i] * se[i] * kTermRms2[i];
+    return 2. * sqrt(s);
+}
+
+double strehlLoss(double rmsNm){
+    const double p = 2. * M_PI * rmsNm / kStrehlLambda;
+    return 1. - exp(-p * p);
+}
+
+int strehlLevel(double loss){
+    return loss <= kStrehlOk ? Good : (loss <= kStrehlBorder ? Watch : Bad);
+}
+
+struct Usability {
+    int level = Good;
+    double unc = 0., loss = 0.;           // all terms
+    double uncAst = 0., lossAst = 0.;     // astigmatism only
+    bool hasClean = false;
+    int levelClean = Good;
+    double uncClean = 0., lossClean = 0.;
+};
+
+Usability usability(const AccuracyResult &r){
+    Usability u;
+    std::vector<double> se;
+    for (const AccuracyTerm &t : r.terms)
+        se.push_back(t.se);
+    u.unc = lowOrderUnc(se);
+    u.loss = strehlLoss(u.unc);
+    u.uncAst = lowOrderUnc(se, 0, 1);
+    u.lossAst = strehlLoss(u.uncAst);
+    u.level = strehlLevel(u.loss);
+    if (r.hasClean){
+        u.hasClean = true;
+        u.uncClean = lowOrderUnc(r.termCleanSe);
+        u.lossClean = strehlLoss(u.uncClean);
+        u.levelClean = strehlLevel(u.lossClean);
+    }
+    return u;
+}
+
+QString usabilitySentence(const AccuracyResult &r, const Usability &u){
+    const char *answer[3] = {"YES", "BORDERLINE", "NO"};
+    QString s = QString("<b>Usable as one direction of the rotation test: %1.</b> ").arg(answer[u.level]);
+    s += QString("The uncertainty of this series (2&sigma;, astigmatism, coma, trefoil and spherical together) is "
+                 "%1 nm rms of wavefront = &lambda;/%2 at 550 nm and could cost up to %3 of Strehl "
+                 "(astigmatism alone: %4 nm, %5). ")
+         .arg(nm(u.unc)).arg(nm(kStrehlLambda / std::max(u.unc, 1e-6), 0)).arg(nm(u.loss, 3))
+         .arg(nm(u.uncAst)).arg(nm(u.lossAst, 3));
+    if (u.level == Good)
+        s += "Averaging it with the other rotations only makes this smaller, so this direction will not spoil "
+             "the result.";
+    else if (u.level == Watch)
+        s += "It can be used, but it will be one of the weaker directions of the rotation test.";
+    else
+        s += "This direction alone would make the rotation test unreliable.";
+    if (u.hasClean && u.level != Good){
+        QStringList far;
+        for (const AccuracyShot &sh : r.shots)
+            if (sh.flag == 2)
+                far << sh.name.toHtmlEscaped();
+        s += QString(" Without %1: %2 nm, %3 of Strehl - %4.")
+             .arg(far.join(", ")).arg(nm(u.uncClean)).arg(nm(u.lossClean, 3))
+             .arg(u.levelClean == Good ? "usable, delete the far-out shots"
+                  : (u.levelClean == Watch ? "borderline" : "still not usable, take the series again"));
+    } else if (u.level == Bad){
+        s += " Take the series again in steadier air.";
+    }
+    return s;
+}
+
 std::vector<Check> qualityChecks(const AccuracyResult &r){
     std::vector<Check> c;
     const double lam = r.lambdaNm;
@@ -693,7 +777,8 @@ QString accuracyReportHtml(const AccuracyResult &r, const QString &title){
     // Verdict.
     {
         const std::vector<Check> checks = qualityChecks(r);
-        int worst = Good;
+        const Usability use = usability(r);
+        int worst = use.level;
         for (const Check &k : checks)
             worst = std::max(worst, k.level);
         const char *overall[3] = {
@@ -701,6 +786,8 @@ QString accuracyReportHtml(const AccuracyResult &r, const QString &title){
             "USABLE - look at the items marked CHECK.",
             "NOT RELIABLE YET - fix the items marked PROBLEM (e.g. delete far-out shots) before trusting the average."};
         h += "<h3>Verdict</h3>";
+        h += QString("<table border='1' cellspacing='0' cellpadding='6' width='100%'><tr><td bgcolor='%1'>"
+                     "%2</td></tr></table><p></p>").arg(levelBg[use.level]).arg(usabilitySentence(r, use));
         h += QString("<table border='1' cellspacing='0' cellpadding='6' width='100%'><tr><td bgcolor='%1'>"
                      "<b>%2</b></td></tr></table>").arg(levelBg[worst]).arg(overall[worst]);
         h += "<p></p><table border='1' cellspacing='0' cellpadding='4' width='100%'>";
@@ -791,6 +878,15 @@ QString accuracyReportHtml(const AccuracyResult &r, const QString &title){
         h += QString("<tr><td><b>%1</b></td><td>%2</td><td bgcolor='#eef8ee'>%3</td><td bgcolor='#fbecec'>%4</td></tr>")
              .arg(item).arg(what).arg(good).arg(bad);
     };
+    guide("Usable as one direction of the rotation test",
+          "The std. errors of astigmatism, coma, trefoil and spherical, turned into one rms wavefront figure "
+          "(2&sigma;) and into the Strehl ratio at 550 nm it could cost (Mar&eacute;chal). The series is judged "
+          "on its own, without relying on the stand or on the other rotations: averaging over rotations can only "
+          "make the error smaller.",
+          "YES: up to 0.02 of Strehl (about 12 nm rms, &lambda;/45 at 550 nm). For astigmatism alone this is a "
+          "std. error up to about 11 nm per term.",
+          "BORDERLINE: 0.02-0.05 (12-20 nm rms) - usable, but a weak direction. NO: above 0.05 - delete far-out "
+          "shots (the report says if that is enough) or take the series again.");
     guide("Attention",
           "Problems found automatically: far-out shots, gaps in the fringe directions, correlated shots.",
           "Empty.",
