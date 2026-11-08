@@ -68,6 +68,7 @@ public:
     void previous();
     void next();
     void deleteCurrent();
+    void setCurrentSourceFolder(const QString &folder);   // folder of the interferogram of the current wave front
     //void processSmoothing();
     void saveAllWaveFrontStats();
     void SaveWavefronts(bool saveNulled);
@@ -165,7 +166,6 @@ private slots:
     void deleteWaveFronts(QList<int> list);
     void averageWavefrontIndices(QList<int> list);
     void igramAccuracy(QList<int> list);
-    void setCurrentSourceFolder(const QString &folder);
     void transfrom(const QList<int> &list);
     void filter();
     void enableTools();
