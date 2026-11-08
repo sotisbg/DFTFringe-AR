@@ -317,7 +317,8 @@ AccuracyResult computeIgramAccuracy(const QList<wavefront *> &wfs){
             s.z[k] = Z.at<double>(i, k);
         res.shots.push_back(s);
         if (s.flag == 2)
-            res.warnings << QObject::tr("%1 is far out (%2 x the median) - measure it again.")
+            res.warnings << QObject::tr("%1 is far out (%2 x the median) - delete it from the wave front list "
+                                        "and run Average and Accuracy again without it.")
                             .arg(s.name).arg(s.ratio, 0, 'f', 1);
     }
 
@@ -531,8 +532,8 @@ std::vector<Check> qualityChecks(const AccuracyResult &r){
         if (!far.isEmpty()){
             k.level = Bad;
             k.hint = QString("Far out: %1. Such a shot was disturbed (air, vibration, a bad fringe analysis) and "
-                             "pulls the average. Measure it again with the fringes in the same direction, or "
-                             "remove it from the average.").arg(far.join(", "));
+                             "pulls the average. Delete it from the wave front list and run Average and "
+                             "Accuracy again without it.").arg(far.join(", "));
             if (r.hasClean)
                 k.hint += QString(" Without %1 the astigmatism would be <b>%2 &plusmn; %3 nm</b> "
                                   "instead of %4 &plusmn; %5 nm.")
@@ -652,8 +653,9 @@ std::vector<Check> qualityChecks(const AccuracyResult &r){
                              "table and in the astigmatism plot.").arg(who);
         } else {
             k.level = Bad;
-            k.hint = QString("The astigmatism depends strongly on one shot (%1). Measure it again or take more "
-                             "shots before trusting the astigmatism.").arg(who);
+            k.hint = QString("The astigmatism depends strongly on one shot (%1). If it stands out in the Shots "
+                             "table or the plot, delete it from the analysis; otherwise take more shots before "
+                             "trusting the astigmatism.").arg(who);
         }
         c.push_back(k);
     }
@@ -697,7 +699,7 @@ QString accuracyReportHtml(const AccuracyResult &r, const QString &title){
         const char *overall[3] = {
             "GOOD - the average can be trusted to within its noise floor.",
             "USABLE - look at the items marked CHECK.",
-            "MEASURE AGAIN or fix the items marked PROBLEM before trusting the average."};
+            "NOT RELIABLE YET - fix the items marked PROBLEM (e.g. delete far-out shots) before trusting the average."};
         h += "<h3>Verdict</h3>";
         h += QString("<table border='1' cellspacing='0' cellpadding='6' width='100%'><tr><td bgcolor='%1'>"
                      "<b>%2</b></td></tr></table>").arg(levelBg[worst]).arg(overall[worst]);
@@ -778,7 +780,7 @@ QString accuracyReportHtml(const AccuracyResult &r, const QString &title){
     }
     h += "</table>";
     h += "<p>Deviation is what is left of each shot after the average and the error that turns with the fringes. "
-         "Deviating: over 1.5&times; the median. Far out: 2.5&times; or more - worth measuring again. "
+         "Deviating: over 1.5&times; the median. Far out: 2.5&times; or more - delete it from the analysis. "
          "No shot is left out of the average automatically.</p>";
 
     // Reading guide.
@@ -845,8 +847,9 @@ QString accuracyReportHtml(const AccuracyResult &r, const QString &title){
     guide("Shots: deviation and &times; median",
           "What is left of each shot after the average and the turning error, compared with the typical shot.",
           "Up to 1.5&times; the median.",
-          "1.5-2.5&times; - deviating, tolerable. 2.5&times; or more - far out: measure it again in the same "
-          "fringe direction (keeps the balance), or leave it out.");
+          "1.5-2.5&times; - deviating, tolerable. 2.5&times; or more - far out: delete it from the wave front "
+          "list and run Average and Accuracy again. Check afterwards that the fringe directions are still "
+          "balanced.");
     h += "</table>";
     h += "<p>Units: all values are nm of <b>wavefront</b>. The surface error is half of it. "
          "&lambda;/x figures use the test wavelength.</p>";
