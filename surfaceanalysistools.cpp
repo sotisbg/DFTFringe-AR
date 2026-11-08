@@ -240,6 +240,11 @@ void surfaceAnalysisTools::on_averagePB_clicked()
 {
     emit average(SelectedWaveFronts());
 }
+
+void surfaceAnalysisTools::on_accuracyPB_clicked()
+{
+    emit accuracy(SelectedWaveFronts());
+}
 void surfaceAnalysisTools::select(int item){
     ui->wavefrontList->selectionModel()->reset();
     if (ui->wavefrontList->count() > 0)

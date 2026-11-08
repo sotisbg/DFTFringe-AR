@@ -261,6 +261,7 @@ SOURCES += SingleApplication/singleapplication.cpp \
     surfacelightingproxy.cpp \
     surfacemanager.cpp \
     standfit.cpp \
+    igramaccuracy.cpp \
     wavefrontloaderworker.cpp \
     transformwavefrontdlg.cpp \
     unwraperrorsview.cpp \
@@ -389,6 +390,7 @@ HEADERS += bezier/bezier.h \
     surfacelightingproxy.h \
     surfacemanager.h \
     standfit.h \
+    igramaccuracy.h \
     wavefrontloaderworker.h \
     transformwavefrontdlg.h \
     unwraperrorsview.h \

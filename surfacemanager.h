@@ -164,6 +164,8 @@ private slots:
     void surfaceGenFinished();
     void deleteWaveFronts(QList<int> list);
     void averageWavefrontIndices(QList<int> list);
+    void igramAccuracy(QList<int> list);
+    void setCurrentSourceFolder(const QString &folder);
     void transfrom(const QList<int> &list);
     void filter();
     void enableTools();

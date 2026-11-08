@@ -55,6 +55,7 @@
 #include "simulationsview.h"
 #include "standastigwizard.h"
 #include "standfit.h"
+#include "igramaccuracy.h"
 #include "subtractwavefronatsdlg.h"
 #include <QTextDocument>
 #include <qwt_plot_marker.h>
@@ -574,6 +575,7 @@ SurfaceManager::SurfaceManager(QObject *parent, surfaceAnalysisTools *tools,
     connect(this, &SurfaceManager::deleteWavefront, m_surfaceTools, &surfaceAnalysisTools::deleteWaveFront);
     connect(m_surfaceTools, &surfaceAnalysisTools::deleteTheseWaveFronts, this, &SurfaceManager::deleteWaveFronts);
     connect(m_surfaceTools, &surfaceAnalysisTools::average,this, &SurfaceManager::averageWavefrontIndices);
+    connect(m_surfaceTools, &surfaceAnalysisTools::accuracy,this, &SurfaceManager::igramAccuracy);
     connect(m_surfaceTools, &surfaceAnalysisTools::doxform,this, &SurfaceManager::transfrom);
     connect(m_surfaceTools, &surfaceAnalysisTools::invert,this,&SurfaceManager::invert);
     connect(m_surfaceTools, &surfaceAnalysisTools::filterWavefronts,this,&SurfaceManager::filter);
@@ -1243,6 +1245,7 @@ wavefront * SurfaceManager::readWaveFront(const QString &fileName){
     double xo, yo, rado;
     wavefront *wf = new wavefront();
     wf->m_origin = WavefrontOrigin::File;
+    wf->sourceFolder = QFileInfo(fileName).absolutePath();
     rado=0;
 
     if (fileName.endsWith(".npz",Qt::CaseInsensitive)){
@@ -1803,6 +1806,44 @@ void SurfaceManager::averageWavefrontIndices(QList<int> list){
 }
 
 
+// Accuracy of averaging the selected wave fronts (interferograms of one
+// direction).  Shown in a window and written to Accuracy.pdf in the folder of
+// the interferograms, replacing the previous one.
+void SurfaceManager::igramAccuracy(QList<int> list){
+    if (list.size() < 4){
+        QMessageBox::warning(0, "Accuracy", "Select at least four wave fronts.");
+        return;
+    }
+    std::sort(list.begin(), list.end());   // the order they were made in
+    QList<wavefront *> wfs;
+    for (int i : list)
+        wfs << m_wavefronts[i];
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    AccuracyResult r = computeIgramAccuracy(wfs);
+    QApplication::restoreOverrideCursor();
+    if (!r.valid){
+        QMessageBox::warning(0, "Accuracy", r.error);
+        return;
+    }
+    QString folder = wfs[0]->sourceFolder;
+    if (folder.isEmpty())
+        folder = QSettings().value("lastPath", "").toString();
+    QString pdf = folder.isEmpty() ? QString() : QDir(folder).filePath("Accuracy.pdf");
+    QString title = QString("%1 wave fronts, %2 ... %3")
+                    .arg(wfs.size())
+                    .arg(QFileInfo(wfs.first()->name).fileName())
+                    .arg(QFileInfo(wfs.last()->name).fileName());
+    if (!folder.isEmpty())
+        title += " - " + QDir::toNativeSeparators(folder);
+    showAccuracyReport(r, title, pdf, (QWidget *)parent());
+}
+
+// The interferogram the current wave front was just made from.
+void SurfaceManager::setCurrentSourceFolder(const QString &folder){
+    if (m_currentNdx >= 0 && m_currentNdx < m_wavefronts.size())
+        m_wavefronts[m_currentNdx]->sourceFolder = folder;
+}
+
 #include "ccswappeddlg.h"
 void SurfaceManager::average(QList<wavefront *> wfList){
     // The mask makes this feature not so straight forward.  The center obstruction might be masked.  There
@@ -2259,7 +2300,7 @@ void plotlineThruAstigs(QwtPlot *plt, cv::Mat xastig, cv::Mat yastig, const QLis
 // 150%).  Images sized in these pixels come out the same physical size in the PDF
 // whatever screen made them.  The monitor's physical DPI, or a fixed 96, made the
 // report images grow or shrink with the screen, up to running off the page.
-static qreal reportImageDpi(){
+qreal reportImageDpi(){
     if (QCoreApplication::testAttribute(Qt::AA_Use96Dpi))
         return 96.;
     QScreen *screen = QGuiApplication::primaryScreen();

@@ -250,6 +250,16 @@
          </property>
         </widget>
        </item>
+       <item row="4" column="0" colspan="4">
+        <widget class="QPushButton" name="accuracyPB">
+         <property name="toolTip">
+          <string>How reliable the average of the selected wave fronts is: noise floor, errors turning with the fringes, deviating shots. Saves Accuracy.pdf in the interferogram folder.</string>
+         </property>
+         <property name="text">
+          <string>Accuracy</string>
+         </property>
+        </widget>
+       </item>
       </layout>
      </widget>
     </item>

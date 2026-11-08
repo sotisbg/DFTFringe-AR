@@ -63,6 +63,7 @@ signals:
     void centerMaskValue(int);
     void deleteTheseWaveFronts(QList<int>);
     void average(QList<int>);
+    void accuracy(QList<int>);
     void defocusChanged();
     void invert(QList<int>);
     void wftNameChanged(int, QString);
@@ -95,6 +96,7 @@ private slots:
     void on_transformsPB_clicked();
 
     void on_averagePB_clicked();
+    void on_accuracyPB_clicked();
 
     void on_SelectAllPB_clicked();
 

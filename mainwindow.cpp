@@ -218,6 +218,9 @@ MainWindow::MainWindow(QWidget *parent) :
                                           m_ogl->m_surface, metrics);
     connect(m_contourView, &contourView::showAllContours, m_surfaceManager, &SurfaceManager::showAllContours);
     connect(m_dftArea, &DFTArea::newWavefront, m_surfaceManager, &SurfaceManager::createWaveFrontFromPhaseMap);
+    connect(m_dftArea, &DFTArea::newWavefront, this, [this](){
+        m_surfaceManager->setCurrentSourceFolder(QFileInfo(m_igramArea->m_filename).absolutePath());
+    });
     connect(m_surfaceManager, &SurfaceManager::diameterChanged,this,&MainWindow::diameterChanged);
     connect(m_surfaceManager, &SurfaceManager::showTab, ui->tabWidget, &QTabWidget::setCurrentIndex);
     connect(m_surfTools, &surfaceAnalysisTools::updateSelected, m_surfaceManager, &SurfaceManager::backGroundUpdate);

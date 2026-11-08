@@ -99,6 +99,7 @@ class wavefront { public:
     bool useSANull;
     bool m_manuallyInverted; // true if user inverted this wavefront
     RotationNoise rotationNoise;
+    QString sourceFolder;   // folder of the interferogram or .wft it came from (not saved)
 };
 
 #endif // WAVEFRONT_H
