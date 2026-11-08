@@ -53,7 +53,13 @@ struct AccuracyResult {
     double astigLockedNm = 0.;    // astigmatism turning with the fringes
     double looAstigMin = 0., looAstigMax = 0.;
     double looSphMin = 0., looSphMax = 0.;
+    int looAstigShot = -1;        // the shot whose removal moves the astigmatism most
     double astigAngleDeg = 0.;
+    // The same without the far-out shots (what Average would give without them).
+    bool hasClean = false;
+    int nClean = 0;
+    double astigClean = 0., astigCleanSe = 0.;
+    std::vector<double> termCleanMean, termCleanSe;   // same order as terms
 };
 
 AccuracyResult computeIgramAccuracy(const QList<wavefront *> &wfs);

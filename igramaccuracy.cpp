@@ -358,6 +358,7 @@ AccuracyResult computeIgramAccuracy(const QList<wavefront *> &wfs){
     for (int i = 0; i < N; ++i){
         sx += Z.at<double>(i, 4); sy += Z.at<double>(i, 5); ssph += Z.at<double>(i, 8);
     }
+    double looMove = -1.;
     for (int i = 0; i < N; ++i){
         double a = std::hypot(sx - Z.at<double>(i, 4), sy - Z.at<double>(i, 5)) / (N - 1);
         double s = (ssph - Z.at<double>(i, 8)) / (N - 1);
@@ -365,6 +366,42 @@ AccuracyResult computeIgramAccuracy(const QList<wavefront *> &wfs){
         res.looAstigMax = std::max(res.looAstigMax, a);
         res.looSphMin = std::min(res.looSphMin, s);
         res.looSphMax = std::max(res.looSphMax, s);
+        if (fabs(a - res.astigMean) > looMove){
+            looMove = fabs(a - res.astigMean);
+            res.looAstigShot = i;
+        }
+    }
+
+    // Without the far-out shots: what Average would give if they are left out.
+    {
+        std::vector<int> keep;
+        for (int i = 0; i < N; ++i)
+            if (res.shots[i].flag != 2)
+                keep.push_back(i);
+        const int M = keep.size();
+        if (M < N && M >= K + 3){
+            cv::Mat Xc(M, K, CV_64F), Zc(M, NZ, CV_64F);
+            for (int j = 0; j < M; ++j){
+                X.row(keep[j]).copyTo(Xc.row(j));
+                Z.row(keep[j]).copyTo(Zc.row(j));
+            }
+            cv::Mat Xcp, XcI;
+            cv::invert(Xc, Xcp, cv::DECOMP_SVD);
+            cv::invert(Xc.t() * Xc, XcI, cv::DECOMP_SVD);
+            for (int k = 4; k < NZ; ++k){
+                cv::Mat y = Zc.col(k).clone();
+                cv::Mat c = Xcp * y;
+                cv::Mat r = y - Xc * c;
+                double s2 = r.dot(r) / (M - K);
+                res.termCleanMean.push_back(cv::mean(y).val[0]);
+                res.termCleanSe.push_back(sqrt(s2 * XcI.at<double>(0, 0)) * inflate);
+            }
+            res.hasClean = true;
+            res.nClean = M;
+            res.astigClean = std::hypot(res.termCleanMean[0], res.termCleanMean[1]);
+            res.astigCleanSe = sqrt(0.5 * (res.termCleanSe[0] * res.termCleanSe[0]
+                                         + res.termCleanSe[1] * res.termCleanSe[1]));
+        }
     }
 
     if (res.nEff < 0.7 * N)
@@ -429,6 +466,212 @@ QImage astigPlot(const AccuracyResult &r){
 
 QString nm(double v, int d = 1){ return QString::number(v, 'f', d); }
 
+// --- Verdicts: thresholds of the checks in the report -----------------------
+
+enum { Good = 0, Watch = 1, Bad = 2 };
+
+const char *levelBg[3]   = {"#d6efd6", "#fff0b8", "#f6cccc"};
+const char *levelText[3] = {"OK", "CHECK", "PROBLEM"};
+
+QString levelCell(int level){
+    return QString("<td bgcolor='%1' align='center'><b>%2</b></td>").arg(levelBg[level]).arg(levelText[level]);
+}
+
+// "29.0 nm = lambda/23"
+QString lamFrac(double v, double lambda){
+    if (v <= 0. || lambda <= 0.)
+        return nm(v) + " nm";
+    return QString("%1 nm = &lambda;/%2").arg(nm(v)).arg(nm(lambda / v, 0));
+}
+
+struct Check {
+    QString what;
+    QString value;
+    int level;
+    QString hint;
+};
+
+std::vector<Check> qualityChecks(const AccuracyResult &r){
+    std::vector<Check> c;
+    const double lam = r.lambdaNm;
+
+    // Number of shots.
+    {
+        Check k;
+        k.what = "Number of shots";
+        k.value = QString::number(r.n);
+        if (r.n >= 12){
+            k.level = Good;
+            k.hint = "Enough shots to separate the noise from the errors that turn with the fringes.";
+        } else if (r.n >= 8){
+            k.level = Watch;
+            k.hint = "Usable, but the noise estimate itself is rough. 12-16 shots in 6-8 fringe directions "
+                     "(two per direction) give a firmer result.";
+        } else {
+            k.level = Bad;
+            k.hint = "Fewer than 8 shots: the errors that turn with the fringes cannot be separated from the "
+                     "noise. Take at least 8, better 12-16, in directions spread around the circle.";
+        }
+        c.push_back(k);
+    }
+
+    // Far out / deviating shots.
+    {
+        QStringList far;
+        int dev = 0;
+        for (const AccuracyShot &s : r.shots){
+            if (s.flag == 2)
+                far << QString("%1 (%2&deg;, %3&times;)").arg(s.name.toHtmlEscaped()).arg(nm(s.tiltDeg, 0)).arg(nm(s.ratio, 1));
+            else if (s.flag == 1)
+                ++dev;
+        }
+        Check k;
+        k.what = "Shots that disagree";
+        k.value = QString("%1 far out, %2 deviating").arg(far.size()).arg(dev);
+        if (!far.isEmpty()){
+            k.level = Bad;
+            k.hint = QString("Far out: %1. Such a shot was disturbed (air, vibration, a bad fringe analysis) and "
+                             "pulls the average. Measure it again with the fringes in the same direction, or "
+                             "remove it from the average.").arg(far.join(", "));
+            if (r.hasClean)
+                k.hint += QString(" Without %1 the astigmatism would be <b>%2 &plusmn; %3 nm</b> "
+                                  "instead of %4 &plusmn; %5 nm.")
+                          .arg(far.size() > 1 ? "them" : "it").arg(nm(r.astigClean)).arg(nm(r.astigCleanSe)).arg(nm(r.astigMean)).arg(nm(r.astigSe));
+        } else if (dev > r.n / 4){
+            k.level = Watch;
+            k.hint = QString("No shot is far out, but %1 of %2 deviate by more than 1.5&times; the median: "
+                             "the conditions were uneven (air, vibration). The noise floor already includes them.")
+                     .arg(dev).arg(r.n);
+        } else {
+            k.level = Good;
+            k.hint = dev ? "A few shots deviate a little (up to 2.5&times; the median) - normal scatter."
+                         : "All shots agree with each other.";
+        }
+        c.push_back(k);
+    }
+
+    // Noise floor against the RMS of the average.
+    {
+        const double ratio = r.rmsAvgNm > 0. ? r.floorNm / r.rmsAvgNm : 1.;
+        Check k;
+        k.what = "Noise floor of the average";
+        k.value = QString("%1<br>%2% of the RMS (%3 nm)").arg(lamFrac(r.floorNm, lam))
+                  .arg(nm(100. * ratio, 0)).arg(nm(r.rmsAvgNm));
+        const bool tiny = lam > 0. && r.floorNm <= lam / 50.;
+        const int need = r.rmsAvgNm > 0. ? int(ceil(r.n * pow(3. * r.floorNm / r.rmsAvgNm, 2))) : 0;
+        if (ratio <= 1. / 3. || tiny){
+            k.level = Good;
+            k.hint = tiny && ratio > 1. / 3.
+                   ? "The noise floor is very small in absolute terms (below &lambda;/50); the mirror itself is very smooth."
+                   : QString("The average stands %1&times; above its own noise: the shape you see is real, "
+                             "it is not air or vibration.").arg(nm(1. / std::max(ratio, 1e-6), 1));
+        } else if (ratio <= 0.5 || (lam > 0. && r.floorNm <= lam / 30.)){
+            k.level = Watch;
+            k.hint = QString("Part of the fine detail of the average is still noise. About %1 shots in total "
+                             "would bring the floor down to a third of the RMS (the floor falls with the "
+                             "square root of the number of shots).").arg(need);
+        } else {
+            k.level = Bad;
+            k.hint = QString("The average is largely noise. Take more shots (about %1 in total) or measure "
+                             "in steadier air.").arg(need);
+        }
+        c.push_back(k);
+    }
+
+    // Independence of the shots.
+    {
+        const double q = r.n > 0 ? r.nEff / r.n : 0.;
+        Check k;
+        k.what = "Independent shots";
+        k.value = QString("%1 of %2 (correlation %3)").arg(nm(r.nEff)).arg(r.n).arg(nm(r.corr, 2));
+        if (q >= 0.85){
+            k.level = Good;
+            k.hint = "Each shot saw different air - every shot counts fully.";
+        } else if (q >= 0.7){
+            k.level = Watch;
+            k.hint = "Consecutive shots are somewhat alike (slow air drift). The noise floor already takes it "
+                     "into account; leave more time between shots.";
+        } else {
+            k.level = Bad;
+            k.hint = "Consecutive shots repeat the same error (slow air current or drift): more shots in a row "
+                     "help little. Let the air settle, leave more time between shots, or block the air flow.";
+        }
+        c.push_back(k);
+    }
+
+    // Fringe directions.
+    {
+        Check k;
+        k.what = "Fringe directions";
+        const double bal = std::max(r.balance1, r.balance2);
+        k.value = QString("gap %1&deg;, balance %2").arg(nm(r.maxGapDeg, 0)).arg(nm(bal, 2));
+        if (r.fringeModel)
+            k.value += QString("<br>%1 nm per shot, %2 nm left").arg(nm(r.lockedNm)).arg(nm(r.biasNm));
+        if (r.maxGapDeg > 120.){
+            k.level = Bad;
+            k.hint = "The directions leave a large gap: the error that turns with the fringes does not cancel "
+                     "and may add astigmatism to the average that the noise figures do not show. Spread the "
+                     "fringe directions around the whole circle (e.g. every 45&deg;).";
+        } else if (!r.fringeModel){
+            k.level = Watch;
+            k.hint = "The error that turns with the fringes could not be estimated (too few shots or too little "
+                     "tilt), so it is unknown how much of it is left in the average.";
+        } else if (r.biasNm > r.floorNm){
+            k.level = Bad;
+            k.hint = QString("The directions are unbalanced: %1 nm of the turning error stays in the average, more "
+                             "than the noise floor. Add shots in the missing directions.").arg(nm(r.biasNm));
+        } else if (r.maxGapDeg > 60. || bal > 0.15 || r.biasNm > r.floorNm / 3.){
+            k.level = Watch;
+            k.hint = QString("The turning error mostly cancels (%1 nm left), but the directions are not spread "
+                             "evenly. Shots every 45&deg; (or 60&deg;) around the circle are best.").arg(nm(r.biasNm));
+        } else {
+            k.level = Good;
+            k.hint = QString("Each shot carries %1 nm of error that turns with the fringes, but the directions are "
+                             "spread evenly and only %2 nm of it is left in the average.")
+                     .arg(nm(r.lockedNm)).arg(nm(r.biasNm));
+        }
+        c.push_back(k);
+    }
+
+    // Stability of the astigmatism (leave one out).
+    {
+        const double span = r.looAstigMax - r.looAstigMin;
+        const double ref = std::max(r.astigMean, lam > 0. ? lam / 20. : 1.);
+        const double rel = span / ref;
+        QString who = (r.looAstigShot >= 0 && r.looAstigShot < (int)r.shots.size())
+                    ? r.shots[r.looAstigShot].name.toHtmlEscaped() : QString();
+        Check k;
+        k.what = "Astigmatism, leaving out one shot";
+        k.value = QString("%1 &ndash; %2 nm").arg(nm(r.looAstigMin)).arg(nm(r.looAstigMax));
+        if (rel <= 0.15){
+            k.level = Good;
+            k.hint = "No single shot decides the astigmatism.";
+        } else if (rel <= 0.3){
+            k.level = Watch;
+            k.hint = QString("One shot moves the astigmatism noticeably (most: %1). Look at it in the Shots "
+                             "table and in the astigmatism plot.").arg(who);
+        } else {
+            k.level = Bad;
+            k.hint = QString("The astigmatism depends strongly on one shot (%1). Measure it again or take more "
+                             "shots before trusting the astigmatism.").arg(who);
+        }
+        c.push_back(k);
+    }
+    return c;
+}
+
+// Significance of a Zernike term: how many standard errors from zero.
+QString significanceCell(double mean, double se){
+    if (se <= 0.)
+        return "<td></td>";
+    const double z = fabs(mean) / se;
+    if (z >= 3.)
+        return QString("<td bgcolor='#d6efd6'>real (%1&sigma;)</td>").arg(nm(z, 1));
+    if (z >= 2.)
+        return QString("<td bgcolor='#fff0b8'>probably real (%1&sigma;)</td>").arg(nm(z, 1));
+    return QString("<td>noise level (%1&sigma;)</td>").arg(nm(z, 1));
+}
+
 } // namespace
 
 QString accuracyReportHtml(const AccuracyResult &r, const QString &title){
@@ -443,6 +686,32 @@ QString accuracyReportHtml(const AccuracyResult &r, const QString &title){
         for (const QString &w : r.warnings)
             h += "<li style='color:#b00000'>" + w.toHtmlEscaped() + "</li>";
         h += "</ul>";
+    }
+
+    // Verdict.
+    {
+        const std::vector<Check> checks = qualityChecks(r);
+        int worst = Good;
+        for (const Check &k : checks)
+            worst = std::max(worst, k.level);
+        const char *overall[3] = {
+            "GOOD - the average can be trusted to within its noise floor.",
+            "USABLE - look at the items marked CHECK.",
+            "MEASURE AGAIN or fix the items marked PROBLEM before trusting the average."};
+        h += "<h3>Verdict</h3>";
+        h += QString("<table border='1' cellspacing='0' cellpadding='6' width='100%'><tr><td bgcolor='%1'>"
+                     "<b>%2</b></td></tr></table>").arg(levelBg[worst]).arg(overall[worst]);
+        h += "<p></p><table border='1' cellspacing='0' cellpadding='4' width='100%'>";
+        h += "<tr><th>Check</th><th>Value</th><th></th><th>What it means / what to do</th></tr>";
+        for (const Check &k : checks)
+            h += QString("<tr><td>%1</td><td>%2</td>%3<td>%4</td></tr>")
+                 .arg(k.what).arg(k.value).arg(levelCell(k.level)).arg(k.hint);
+        h += "</table>";
+        h += "<p><i>Not covered by these checks:</i> errors that are the same in every shot - the stand, the "
+             "reference, the null, steady air currents. A term can be &quot;real&quot; here and still come from "
+             "the test setup. To tell: rotate the mirror on the stand (90&deg; or more) and measure again - "
+             "astigmatism or coma that turns with the mirror belongs to the mirror, what stays in place belongs "
+             "to the setup.</p>";
     }
 
     h += "<h3>Noise</h3><table border='1' cellspacing='0' cellpadding='4'>";
@@ -467,13 +736,23 @@ QString accuracyReportHtml(const AccuracyResult &r, const QString &title){
          "steady air currents - do not show here.</p>";
 
     h += "<h3>Zernike terms of the average</h3><table border='1' cellspacing='0' cellpadding='4'>";
-    h += "<tr><th>Term</th><th>Average</th><th>&plusmn; std. error</th><th>single shot scatter</th></tr>";
-    for (const AccuracyTerm &t : r.terms)
-        h += QString("<tr><td>%1</td><td align='right'>%2</td><td align='right'>%3</td><td align='right'>%4</td></tr>")
-             .arg(t.name).arg(nm(t.mean)).arg(nm(t.se)).arg(nm(t.sigma1));
+    h += "<tr><th>Term</th><th>Average</th><th>&plusmn; std. error</th><th>single shot scatter</th><th>Is it real?</th>";
+    if (r.hasClean)
+        h += QString("<th>without far-out shots (%1)</th>").arg(r.nClean);
+    h += "</tr>";
+    for (size_t i = 0; i < r.terms.size(); ++i){
+        const AccuracyTerm &t = r.terms[i];
+        h += QString("<tr><td>%1</td><td align='right'>%2</td><td align='right'>%3</td><td align='right'>%4</td>%5")
+             .arg(t.name).arg(nm(t.mean)).arg(nm(t.se)).arg(nm(t.sigma1)).arg(significanceCell(t.mean, t.se));
+        if (r.hasClean && i < r.termCleanMean.size())
+            h += QString("<td align='right'>%1 &plusmn; %2</td>").arg(nm(r.termCleanMean[i])).arg(nm(r.termCleanSe[i]));
+        h += "</tr>";
+    }
     h += "</table>";
     h += "<p>Spherical is before the null. The std. error is 1 sigma; about 95% of repeated averages fall within "
-         "2 std. errors.</p>";
+         "2 std. errors. <b>Is it real?</b> compares the term with its std. error: 3&sigma; or more - real; "
+         "2-3&sigma; - probably real; below 2&sigma; - it cannot be told from noise, treat it as zero. "
+         "If the single shot scatter of a term is much larger than in the other terms, look for a far-out shot.</p>";
     h += QString("<p><b>Astigmatism</b> %1 &plusmn; %2 nm (corrected for noise: %3 nm). Leaving out one shot it "
                  "ranges %4 &ndash; %5 nm.").arg(nm(r.astigMean)).arg(nm(r.astigSe)).arg(nm(r.astigCorrected))
          .arg(nm(r.looAstigMin)).arg(nm(r.looAstigMax));
@@ -501,6 +780,76 @@ QString accuracyReportHtml(const AccuracyResult &r, const QString &title){
     h += "<p>Deviation is what is left of each shot after the average and the error that turns with the fringes. "
          "Deviating: over 1.5&times; the median. Far out: 2.5&times; or more - worth measuring again. "
          "No shot is left out of the average automatically.</p>";
+
+    // Reading guide.
+    h += "<h3>How to read this report</h3>";
+    h += "<table border='1' cellspacing='0' cellpadding='4' width='100%'>";
+    h += "<tr><th>Item</th><th>What it is</th><th>Good</th><th>Not good</th></tr>";
+    auto guide = [&](const char *item, const char *what, const char *good, const char *bad){
+        h += QString("<tr><td><b>%1</b></td><td>%2</td><td bgcolor='#eef8ee'>%3</td><td bgcolor='#fbecec'>%4</td></tr>")
+             .arg(item).arg(what).arg(good).arg(bad);
+    };
+    guide("Attention",
+          "Problems found automatically: far-out shots, gaps in the fringe directions, correlated shots.",
+          "Empty.",
+          "Anything listed - deal with it first, the rest of the report is less reliable until then.");
+    guide("Noise floor of the average",
+          "How far the average itself may still be from the truth because of random errors (air, vibration, "
+          "fringe analysis). It is the scatter of one shot divided by the square root of the number of "
+          "independent shots: 4&times; more shots halve it.",
+          "Below a third of the RMS of the average, or below &lambda;/50. The shape of the average is then real.",
+          "Above half of the RMS: the fine detail of the average is mostly noise. Take more shots or wait for "
+          "steadier air.");
+    guide("Scatter of a single shot",
+          "How much one shot differs from the next. The random part is what is left after the error that turns "
+          "with the fringes; about the plain average it is a little larger.",
+          "Small compared with the RMS of the average. The two scatter figures close to each other.",
+          "Much larger than the RMS: unsteady air or vibration. The plain one much larger than the random one: "
+          "a strong error turning with the fringes.");
+    guide("Independent shots",
+          "Shots taken one after another may see the same air and repeat the same error. The correlation of "
+          "consecutive shots turns into an effective number of independent shots.",
+          "Correlation around 0 or negative (up to about +0.08); 85% or more of the shots independent.",
+          "Correlation above about +0.18; fewer than 70% of the shots independent. Slow air current: more shots "
+          "in a row do not help, time between them does.");
+    guide("Error turning with the fringes",
+          "Part of the error of each shot follows the direction of the fringes (mostly astigmatism from the "
+          "interferometer and the analysis). In shots spread evenly around the circle it cancels.",
+          "Whatever it is per shot, the part left in the average is well below the noise floor.",
+          "The part left in the average is comparable with or larger than the noise floor: add shots in the "
+          "missing directions.");
+    guide("Balance and largest gap",
+          "How evenly the fringe directions cover the circle. Balance 0 means perfectly even.",
+          "Balance below 0.15, largest gap 60&deg; or less (e.g. 8 directions every 45&deg;, two shots in each).",
+          "Gap over 120&deg; - the turning error cannot even be estimated. Balance above 0.3.");
+    guide("RMS of the average",
+          "The surface error of the average without piston, tilt, focus and spherical (the null is not applied). "
+          "Only a reference for the noise floor - the full analysis is in the main report.",
+          "-", "-");
+    guide("Zernike terms",
+          "Each term of the average with its std. error (1&sigma;) and the scatter of one shot.",
+          "Average at least 3 std. errors from zero - real. Small std. error compared with the tolerance you "
+          "work to.",
+          "Below 2 std. errors - indistinguishable from zero. Std. error comparable with the tolerance - the "
+          "term is not measured well enough.");
+    guide("Astigmatism, leaving out one shot",
+          "The astigmatism of the average recomputed once without each shot. Shows whether one shot "
+          "decides the result.",
+          "The range is narrow - within about 15% of the astigmatism.",
+          "A wide range, especially if one end is far from the rest: one shot dominates. Find it in the Shots "
+          "table (its Astig X/Y stands out) and in the plot (a mark far from the cloud).");
+    guide("Astigmatism plot",
+          "Each mark is one shot (Astig X against Y), the cross is the average, the dashed circle is 2 std. errors.",
+          "The marks form one cloud around the cross; blue marks.",
+          "A mark far outside the cloud (orange - deviating, red - far out).");
+    guide("Shots: deviation and &times; median",
+          "What is left of each shot after the average and the turning error, compared with the typical shot.",
+          "Up to 1.5&times; the median.",
+          "1.5-2.5&times; - deviating, tolerable. 2.5&times; or more - far out: measure it again in the same "
+          "fringe direction (keeps the balance), or leave it out.");
+    h += "</table>";
+    h += "<p>Units: all values are nm of <b>wavefront</b>. The surface error is half of it. "
+         "&lambda;/x figures use the test wavelength.</p>";
     h += "</body></html>";
     return h;
 }
