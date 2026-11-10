@@ -74,6 +74,8 @@ signals:
 
 
 public slots:
+    // flag per list row: 0 none, 1 yellow dot (deviating), 2 red dot (far out; row is also selected)
+    void markWaveFronts(const QList<int> &flags);
     void currentNdxChanged(int);
     void deleteWaveFront(int);
     void defocusTimerDone();
@@ -119,6 +121,7 @@ private slots:
 private:
     Ui::surfaceAnalysisTools *ui;
     int lastCurrentItem;
+    void refreshIcon(int row);
 };
 
 #endif // SURFACEANALYSISTOOLS_H

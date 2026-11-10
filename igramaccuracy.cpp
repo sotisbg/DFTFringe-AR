@@ -986,7 +986,12 @@ QString showAccuracyReport(const AccuracyResult &r, const QString &title,
     }
 
     // Window.
-    QDialog dlg(parent);
+    // Not modal and minimizable: it can stay open next to the wave front list.
+    QDialog *pdlg = new QDialog(parent, Qt::Window | Qt::WindowTitleHint | Qt::WindowSystemMenuHint |
+                                Qt::WindowMinimizeButtonHint | Qt::WindowMaximizeButtonHint |
+                                Qt::WindowCloseButtonHint);
+    pdlg->setAttribute(Qt::WA_DeleteOnClose);
+    QDialog &dlg = *pdlg;
     dlg.setWindowTitle(QObject::tr("Accuracy of the average"));
     dlg.resize(950, 850);
     QVBoxLayout *lay = new QVBoxLayout(&dlg);
@@ -1016,6 +1021,6 @@ QString showAccuracyReport(const AccuracyResult &r, const QString &title,
     QObject::connect(close, &QPushButton::clicked, &dlg, &QDialog::accept);
     row->addWidget(close);
     lay->addLayout(row);
-    dlg.exec();
+    dlg.show();
     return written;
 }

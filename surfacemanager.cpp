@@ -1835,6 +1835,15 @@ void SurfaceManager::igramAccuracy(QList<int> list){
                     .arg(QFileInfo(wfs.last()->name).fileName());
     if (!folder.isEmpty())
         title += " - " + QDir::toNativeSeparators(folder);
+    // Marked before the window is shown, so it works whether it stays open or is closed.
+    // Yellow dot = deviating, red dot = far out (and selected: just press Delete).
+    QList<int> flags;
+    for (int i = 0; i < m_wavefronts.size(); ++i)
+        flags << 0;
+    for (size_t k = 0; k < r.shots.size() && (int)k < list.size(); ++k)
+        if (list[k] >= 0 && list[k] < flags.size())
+            flags[list[k]] = r.shots[k].flag;
+    m_surfaceTools->markWaveFronts(flags);
     showAccuracyReport(r, title, pdf, (QWidget *)parent());
 }
 

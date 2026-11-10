@@ -22,6 +22,8 @@
 #include <QMenu>
 #include <QSettings>
 #include <QShortcut>
+#include <QPainter>
+#include <QPixmap>
 #include <QtAlgorithms>
 #include <QLineEdit>
 #include <QSignalBlocker>
@@ -41,6 +43,7 @@ surfaceAnalysisTools::surfaceAnalysisTools(QWidget *parent) :
     ui(new Ui::surfaceAnalysisTools),lastCurrentItem(-1)
 {
     ui->setupUi(this);
+    ui->wavefrontList->setIconSize(QSize(34, 16));   // check mark + status dot, see refreshIcon()
     //ui->deleteWave->setIcon(style()->standardIcon(QStyle::SP_TrashIcon));
     m_edgeMaskLabel = ui->outsideEdgeMaskLabel;
     m_centerMaskLabel = ui->insideEdgeMaskLabel;
@@ -119,25 +122,55 @@ void surfaceAnalysisTools::on_spinBox_2_valueChanged(int arg1)
     emit centerMaskValue(arg1);
 }
 
+// Icon of a row = [check mark if it is the current wave front][yellow/red dot if
+// Accuracy found it deviating/far out]; both slots are always 16 px wide so the
+// names stay aligned.  The flag lives in the item (Qt::UserRole + 1).
+void surfaceAnalysisTools::refreshIcon(int row){
+    QListWidgetItem *item = ui->wavefrontList->item(row);
+    if (!item)
+        return;
+    int flag = item->data(Qt::UserRole + 1).toInt();
+    QPixmap pm(34, 16);
+    pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+    if (row == lastCurrentItem)
+        p.drawPixmap(0, 0, style()->standardIcon(QStyle::SP_DialogYesButton).pixmap(16, 16));
+    if (flag == 1 || flag == 2){
+        p.setPen(QPen(flag == 2 ? QColor(150, 0, 0) : QColor(160, 110, 0), 1));
+        p.setBrush(flag == 2 ? QColor(220, 30, 30) : QColor(250, 200, 0));
+        p.drawEllipse(QRectF(19, 3, 10, 10));
+    }
+    p.end();
+    item->setIcon(QIcon(pm));
+}
+
+// Marks the wave fronts Accuracy found deviating (yellow dot) or far out (red
+// dot) and selects the far-out ones, so Delete removes them.
+void surfaceAnalysisTools::markWaveFronts(const QList<int> &flags){
+    ui->wavefrontList->clearSelection();
+    for (int i = 0; i < ui->wavefrontList->count(); ++i){
+        int f = i < flags.size() ? flags[i] : 0;
+        ui->wavefrontList->item(i)->setData(Qt::UserRole + 1, f);
+        refreshIcon(i);
+        if (f == 2)
+            ui->wavefrontList->item(i)->setSelected(true);
+    }
+    ui->wavefrontList->setFocus();
+}
+
 // this is responsible of giving user feedback about which wft is currently displayed
 void surfaceAnalysisTools::currentNdxChanged(int ndx){
     if (ui->wavefrontList->count() == 0)
         return;
 
-    QListWidgetItem *item = ui->wavefrontList->item(lastCurrentItem);
-    if (item){
-        QIcon blankIcon;
-        QPixmap pixmap(16, 16);
-        pixmap.fill(Qt::transparent);
-        blankIcon.addPixmap(pixmap);
-        item->setIcon(blankIcon); // use a transparent icon to align text
-    }
+    int prev = lastCurrentItem;
+    lastCurrentItem = -1;
+    refreshIcon(prev);   // the old current one loses the check mark
     ui->wavefrontList->setCurrentRow(ndx,QItemSelectionModel::Current);
 
-    item = ui->wavefrontList->currentItem();
-    item->setIcon(style()->standardIcon(QStyle::SP_DialogYesButton));
-
     lastCurrentItem = ui->wavefrontList->currentRow();
+    refreshIcon(lastCurrentItem);
 }
 
 void surfaceAnalysisTools::deleteWaveFront(int i){
