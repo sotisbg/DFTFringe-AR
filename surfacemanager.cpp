@@ -3950,6 +3950,8 @@ void SurfaceManager::showAllContours(){ //TODO move to contourview would make mo
     scrollArea->setBackgroundRole(QPalette::Dark);
     scrollArea->setAutoFillBackground(true);
     QPushButton *savePb = new QPushButton("Save as Image",w);
+    savePb->setMinimumSize(180, 40);
+    savePb->setStyleSheet("font-size: 15px; padding: 4px 16px;");
 
     connect(savePb, &QAbstractButton::pressed, this, &SurfaceManager::saveAllContours);
     layout->addWidget(savePb,0,Qt::AlignHCenter);

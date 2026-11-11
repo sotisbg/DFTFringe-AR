@@ -28,6 +28,7 @@
 
 #include <opencv2/opencv.hpp>
 #include <QApplication>
+#include <QScreen>
 #include <QDesktopServices>
 #include <QDialog>
 #include <QDir>
@@ -993,7 +994,13 @@ QString showAccuracyReport(const AccuracyResult &r, const QString &title,
     pdlg->setAttribute(Qt::WA_DeleteOnClose);
     QDialog &dlg = *pdlg;
     dlg.setWindowTitle(QObject::tr("Accuracy of the average"));
-    dlg.resize(950, 850);
+    {   // fit the usable screen: low resolutions cut off the buttons at the bottom
+        QRect avail = QGuiApplication::primaryScreen()->availableGeometry();
+        int w = qMin(950, avail.width() - 20);
+        int h = qMin(850, avail.height() - 60);   // room for the title bar
+        dlg.resize(w, h);
+        dlg.move(avail.left() + (avail.width() - w) / 2, avail.top() + 5);
+    }
     QVBoxLayout *lay = new QVBoxLayout(&dlg);
     QTextBrowser *tb = new QTextBrowser(&dlg);
     tb->document()->addResource(QTextDocument::ImageResource, QUrl("accuracy://astig"),

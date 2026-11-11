@@ -37,8 +37,9 @@
                         border-width: 3px;
                         border-radius: 7px;
                         border-color: darkgray;
-                        font: normal 12px;
-                           padding: 2px; }</string>
+                        font: normal 13px;
+                        min-height: 18px;
+                           padding: 3px; }</string>
    </property>
    <layout class="QVBoxLayout" name="verticalLayout">
     <item>

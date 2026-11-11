@@ -1,5 +1,7 @@
 #include "batchigramwizard.h"
 #include "ui_batchigramwizard.h"
+#include <QGuiApplication>
+#include <QScreen>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -42,7 +44,11 @@ batchIgramWizard::batchIgramWizard(const QStringList &files, QWidget *parent, Qt
     QList<QWizard::WizardButton> layout;
     layout << QWizard::Stretch << QWizard::CancelButton;
     setButtonLayout(layout);
-    resize(800,600);
+    // Full height of the usable screen (below the title bar / above the taskbar).
+    QRect avail = QGuiApplication::primaryScreen()->availableGeometry();
+    int frameH = frameGeometry().height() - height();   // title bar + borders (0 before first show)
+    resize(qMin(800, avail.width()), qMax(300, avail.height() - qMax(frameH, 40)));
+    move(avail.left() + qMax(0, (avail.width() - width()) / 2), avail.top());
 }
 
 batchIgramWizard::~batchIgramWizard()

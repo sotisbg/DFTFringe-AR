@@ -69,6 +69,15 @@
      </item>
      <item>
       <widget class="QPushButton" name="pushButton">
+       <property name="minimumSize">
+        <size>
+         <width>0</width>
+         <height>36</height>
+        </size>
+       </property>
+       <property name="styleSheet">
+        <string notr="true">font: normal 14px; padding: 2px 10px;</string>
+       </property>
        <property name="toolTip">
         <string>Show all selected wavefronts</string>
        </property>
@@ -79,6 +88,15 @@
      </item>
      <item>
       <widget class="QPushButton" name="histogram">
+       <property name="minimumSize">
+        <size>
+         <width>0</width>
+         <height>36</height>
+        </size>
+       </property>
+       <property name="styleSheet">
+        <string notr="true">font: normal 14px; padding: 2px 10px;</string>
+       </property>
        <property name="text">
         <string>Histogram</string>
        </property>
