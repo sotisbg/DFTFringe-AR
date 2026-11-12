@@ -1167,7 +1167,6 @@ em;
    <addaction name="actionSave_Zernike_file"/>
    <addaction name="actionSubtract_wave_front"/>
    <addaction name="actionAbracadabra"/>
-   <addaction name="separator"/>
   </widget>
   <action name="actionLoad_Interferogram">
    <property name="icon">

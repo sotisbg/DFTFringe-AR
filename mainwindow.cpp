@@ -145,7 +145,11 @@ MainWindow::MainWindow(QWidget *parent) :
         QLabel *ok = new QLabel(ui->toolBar);
         ok->setObjectName("abracadabraOk");
         ok->setStyleSheet("QLabel { color: #1e8a3c; font: bold 14px; padding: 0 6px; }");
-        QAction *okAct = ui->toolBar->insertWidget(ui->actionAbracadabra, ok);   // left of the button, which stays the last one
+        // an expanding spacer pushes the OK and the button to the right edge of the window
+        QWidget *spacer = new QWidget(ui->toolBar);
+        spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+        ui->toolBar->insertWidget(ui->actionAbracadabra, spacer);
+        QAction *okAct = ui->toolBar->insertWidget(ui->actionAbracadabra, ok);   // left of the button, which is the last one
         okAct->setObjectName("abracadabraOkAction");
         okAct->setVisible(false);
         qApp->installEventFilter(new AbracadabraOkHider(okAct, this));   // gone at the next click or key
@@ -1747,23 +1751,37 @@ void MainWindow::on_actionAbracadabra_triggered()
     };
     QSettings settings;
 
-    // 1. the folder of the current mirror = where its .json/.mir file is
-    QString cfg = settings.value("mirrorConfigFile").toString();
-    QString mirrorPath = cfg.isEmpty() ? QString() : QFileInfo(cfg).absolutePath();
-    if (mirrorPath.isEmpty() || !QDir(mirrorPath).exists())
-        mirrorPath = settings.value("lastPath").toString();
-    QDir mirrorDir(mirrorPath);
-    if (mirrorPath.isEmpty() || !mirrorDir.exists()){
-        QMessageBox::warning(this, title, "There is no current mirror folder. Load the mirror first.");
-        return;
-    }
-
-    // 2. numbered sub folders and today's folder
     QStringList todayKeys;     // today's date in the usual ways, digits only
     QDate today = QDate::currentDate();
     for (const char *fmt : {"yyyyMMdd", "ddMMyyyy", "MMddyyyy", "yyMMdd", "ddMMyy"})
         todayKeys << today.toString(fmt);
     QRegularExpression digitsOnly("^\\d+$");
+    auto isIgramFolderName = [&](const QString &name){
+        if (digitsOnly.match(name).hasMatch())
+            return true;
+        QString digits = name;
+        digits.remove(QRegularExpression("\\D"));
+        for (const QString &k : todayKeys)
+            if (digits.contains(k))
+                return true;
+        return false;
+    };
+
+    // 1. the folder of the current mirror = the folder that was opened last (lastPath).  If that is
+    //    itself a folder of interferograms (a number or today's date), the mirror folder is its parent.
+    QString mirrorPath = QDir::cleanPath(settings.value("lastPath").toString());
+    if (!mirrorPath.isEmpty() && mirrorPath != "." && isIgramFolderName(QFileInfo(mirrorPath).fileName())){
+        QDir up(mirrorPath);
+        if (up.cdUp())
+            mirrorPath = up.absolutePath();
+    }
+    QDir mirrorDir(mirrorPath);
+    if (mirrorPath.isEmpty() || mirrorPath == "." || !mirrorDir.exists()){
+        QMessageBox::warning(this, title, "There is no last opened folder. Open the mirror or an interferogram first.");
+        return;
+    }
+
+    // 2. numbered sub folders and today's folder
     int maxNum = -1;
     QFileInfo dateDir;
     bool haveDate = false, dateIsToday = false;
