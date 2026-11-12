@@ -1862,8 +1862,27 @@ void MainWindow::on_actionAbracadabra_triggered()
     // 4. all interferograms, with the current DFTFringe settings (the way the batch does it)
     QList<wavefront *> made;
     QStringList skipped;
-    int n = 0;
+    int n = 0, reused = 0;
+    const QString oldFolder = dateDir.absoluteFilePath();   // where they were before the rename
+    auto sameFolder = [](const QString &a, const QString &b){
+        return !a.isEmpty() && QDir::cleanPath(a).compare(QDir::cleanPath(b), Qt::CaseInsensitive) == 0;
+    };
     for (const QString &fn : igrams){
+        // already processed (loaded in the program from this very interferogram): do not make it again
+        wavefront *existing = nullptr;
+        for (wavefront *w : m_surfaceManager->m_wavefronts)
+            if (w->m_origin == WavefrontOrigin::Igram && w->name == QFileInfo(fn).baseName() &&
+                (sameFolder(w->sourceFolder, oldFolder) || sameFolder(w->sourceFolder, igramDir))){
+                existing = w;
+                break;
+            }
+        if (existing){
+            existing->sourceFolder = igramDir;
+            made << existing;
+            ++reused;
+            ++n;
+            continue;
+        }
         statusBar()->showMessage(QString("Abracadabra: %1 / %2  %3")
                                  .arg(++n).arg(igrams.size()).arg(QFileInfo(fn).fileName()));
         QApplication::processEvents();
@@ -1891,6 +1910,10 @@ void MainWindow::on_actionAbracadabra_triggered()
         made << m_surfaceManager->m_wavefronts.back();
     }
     waitReady(60000);
+    // in the order they were made in (reused ones are older), as Accuracy expects
+    std::sort(made.begin(), made.end(), [this](wavefront *a, wavefront *b){
+        return m_surfaceManager->m_wavefronts.indexOf(a) < m_surfaceManager->m_wavefronts.indexOf(b);
+    });
     QString skippedText = skipped.isEmpty() ? QString()
                           : "\n\nSkipped:\n" + skipped.join("\n");
     if (made.size() < 4){
@@ -2010,7 +2033,8 @@ void MainWindow::on_actionAbracadabra_triggered()
         QMessageBox::warning(this, title, report + (picOk ? QString() : "\n\nThe picture could not be saved.") +
                              (accPdf.isEmpty() ? QString("\n\nAccuracy.pdf could not be saved.") : QString()) + skippedText);
     else
-        showOk(QString("OK  %1: %2 averaged, %3 removed").arg(record).arg(made.size()).arg(removed));
+        showOk(QString("OK  %1: %2 averaged, %3 removed").arg(record).arg(made.size()).arg(removed) +
+               (reused ? QString(", %1 already processed").arg(reused) : QString()));
 }
 
 void MainWindow::on_actionCamera_Calibration_triggered()
