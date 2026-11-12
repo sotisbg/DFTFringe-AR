@@ -16,6 +16,7 @@ public:
     explicit zernikeEditDlg(SurfaceManager *sfm ,QWidget *parent = 0);
     ~zernikeEditDlg();
     void importCurrentAndSave();
+    bool importCurrentAndSaveAs(const QString &fileName);
 signals:
     void termCountChanged(int);
 private slots:
@@ -35,6 +36,7 @@ private slots:
     void on_maxOrder_valueChanged(int arg1);
 
 private:
+    bool writeFile(const QString &fileName);
     Ui::zernikeEditDlg *ui;
     SurfaceManager *m_sm;
     ZernTableModel * tableModel;

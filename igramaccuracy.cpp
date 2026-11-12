@@ -955,7 +955,7 @@ QString accuracyReportHtml(const AccuracyResult &r, const QString &title){
 }
 
 QString showAccuracyReport(const AccuracyResult &r, const QString &title,
-                           const QString &pdfPath, QWidget *parent){
+                           const QString &pdfPath, QWidget *parent, bool showWindow){
     const QString html = accuracyReportHtml(r, title);
     const QImage plot = astigPlot(r);
 
@@ -985,6 +985,9 @@ QString showAccuracyReport(const AccuracyResult &r, const QString &title,
             written = pdfPath;
         }
     }
+
+    if (!showWindow)
+        return written;
 
     // Window.
     // Not modal and minimizable: it can stay open next to the wave front list.

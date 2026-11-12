@@ -1166,6 +1166,7 @@ em;
    <addaction name="actionDelete_wave_front"/>
    <addaction name="actionSave_Zernike_file"/>
    <addaction name="actionSubtract_wave_front"/>
+   <addaction name="actionAbracadabra"/>
    <addaction name="separator"/>
   </widget>
   <action name="actionLoad_Interferogram">
@@ -1280,6 +1281,17 @@ em;
    </property>
    <property name="statusTip">
     <string>Fit the current wavefront and save its Zernike values to a .zrn file.</string>
+   </property>
+  </action>
+  <action name="actionAbracadabra">
+   <property name="text">
+    <string>Abracadabra</string>
+   </property>
+   <property name="toolTip">
+    <string>Renames today's folder of this mirror to the next number, processes its interferograms, removes the far out ones (Accuracy), averages, saves the average (.wft and .zrn) and a picture of the last two averages and their difference.</string>
+   </property>
+   <property name="statusTip">
+    <string>Process today's interferograms of the current mirror and save the average with the next number.</string>
    </property>
   </action>
   <action name="actionIgram">

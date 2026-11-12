@@ -126,6 +126,11 @@ public:
     void generateSurfacefromWavefront(wavefront *wf);
     void transform();
     void subtract(wavefront *wf1, wavefront *wf2, bool use_null = true);
+    // used by the Abracadabra button
+    QList<int> accuracyFlags(const QList<wavefront *> &wfs, QString *error);
+    bool cleanByAccuracy(QList<wavefront *> &wfs, int &removed, QString &error);
+    QString writeAccuracyPdf(const QList<wavefront *> &wfs, const QString &folder);
+    QWidget *buildAllContours(const QList<int> &list, int cols);
 private:
     QProgressDialog *pd;
     QTimer *m_waveFrontTimer;

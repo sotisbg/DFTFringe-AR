@@ -284,6 +284,22 @@ void surfaceAnalysisTools::select(int item){
         ui->wavefrontList->item(item)->setSelected(true);
 }
 
+void surfaceAnalysisTools::selectIndices(const QList<int> &rows){
+    ui->wavefrontList->clearSelection();
+    for (int r : rows)
+        if (r >= 0 && r < ui->wavefrontList->count())
+            ui->wavefrontList->item(r)->setSelected(true);
+}
+
+void surfaceAnalysisTools::clickRow(int row){
+    if (row < 0 || row >= ui->wavefrontList->count())
+        return;
+    selectIndices(QList<int>() << row);
+    currentNdxChanged(row);
+    ui->wavefrontList->setFocus();
+    emit waveFrontClicked(row);
+}
+
 void surfaceAnalysisTools::on_SelectAllPB_clicked()
 {
     ui->wavefrontList->selectAll();

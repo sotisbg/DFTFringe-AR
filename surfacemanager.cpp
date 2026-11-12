@@ -1847,6 +1847,82 @@ void SurfaceManager::igramAccuracy(QList<int> list){
     showAccuracyReport(r, title, pdf, (QWidget *)parent());
 }
 
+// Accuracy without any window or PDF (used by Abracadabra): one flag per wave front of
+// `wfs` (0 ok, 1 deviating, 2 far out), in the same order.  Empty list = it failed, why is in *error.
+QList<int> SurfaceManager::accuracyFlags(const QList<wavefront *> &wfs, QString *error){
+    QList<int> flags;
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    AccuracyResult r = computeIgramAccuracy(wfs);
+    QApplication::restoreOverrideCursor();
+    if (!r.valid){
+        if (error)
+            *error = r.error;
+        return flags;
+    }
+    for (int k = 0; k < wfs.size(); ++k)
+        flags << ((size_t)k < r.shots.size() ? r.shots[k].flag : 0);
+    return flags;
+}
+
+// Accuracy of `wfs` written to Accuracy.pdf in `folder`, no window (Abracadabra).
+// Returns the PDF path, "" if it could not be written.
+QString SurfaceManager::writeAccuracyPdf(const QList<wavefront *> &wfs, const QString &folder){
+    if (wfs.size() < 4 || folder.isEmpty())
+        return QString();
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    AccuracyResult r = computeIgramAccuracy(wfs);
+    QApplication::restoreOverrideCursor();
+    if (!r.valid)
+        return QString();
+    QString title = QString("%1 wave fronts, %2 ... %3 - %4")
+                    .arg(wfs.size())
+                    .arg(QFileInfo(wfs.first()->name).fileName())
+                    .arg(QFileInfo(wfs.last()->name).fileName())
+                    .arg(QDir::toNativeSeparators(folder));
+    return showAccuracyReport(r, title, QDir(folder).filePath("Accuracy.pdf"), nullptr, false);
+}
+
+// Accuracy again and again: far out (red) wave fronts are deleted until none is left.  `wfs`
+// are in the order they were made in; the deleted ones are removed from it.  The yellow/red
+// dots are left on the list.  false = stopped before the end, the reason is in `error`.
+bool SurfaceManager::cleanByAccuracy(QList<wavefront *> &wfs, int &removed, QString &error){
+    removed = 0;
+    for (int pass = 0; pass < 100; ++pass){
+        if (wfs.size() < 4){
+            error = tr("Only %1 wave fronts left, Accuracy needs at least four.").arg(wfs.size());
+            return false;
+        }
+        QString err;
+        QList<int> f = accuracyFlags(wfs, &err);
+        if (f.isEmpty()){
+            error = err;
+            return false;
+        }
+        QList<int> all;
+        for (int i = 0; i < m_wavefronts.size(); ++i)
+            all << 0;
+        QList<int> red;                       // indexes in m_wavefronts
+        for (int k = 0; k < wfs.size(); ++k){
+            int ndx = m_wavefronts.indexOf(wfs[k]);
+            if (ndx < 0)
+                continue;
+            all[ndx] = f[k];
+            if (f[k] == 2)
+                red << ndx;
+        }
+        m_surfaceTools->markWaveFronts(all);
+        if (red.isEmpty())
+            return true;
+        std::sort(red.begin(), red.end(), std::greater<int>());
+        for (int ndx : red)
+            wfs.removeAll(m_wavefronts[ndx]);   // before they are deleted
+        deleteWaveFronts(red);
+        removed += red.size();
+    }
+    error = tr("Still red points after 100 rounds of Accuracy.");
+    return false;
+}
+
 // The interferogram the current wave front was just made from.
 void SurfaceManager::setCurrentSourceFolder(const QString &folder){
     if (m_currentNdx >= 0 && m_currentNdx < m_wavefronts.size())
@@ -3880,15 +3956,25 @@ void SurfaceManager::showAllContours(){ //TODO move to contourview would make mo
     if (!dlg.exec()) {
         return;
     }
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    QList<int> list = surfaceAnalysisTools::get_Instance()->SelectedWaveFronts();
+    QWidget *w = buildAllContours(list, dlg.getColumns()); //TODO parameter number of pixels unused here. update the dlg ui
+    w->show();
+    QApplication::restoreOverrideCursor();
+}
+
+// Draws the contour plots of the wave fronts in `list` (indexes into m_wavefronts, in this
+// order) into m_allContours and returns the window that shows it (not shown yet).  Used by
+// "Show Selected Wavefronts" and by Abracadabra.
+QWidget *SurfaceManager::buildAllContours(const QList<int> &list, int cols){
     QRect rec = QGuiApplication::primaryScreen()->geometry();
     QApplication::setOverrideCursor(Qt::WaitCursor);
     ContourPlot *plot =new ContourPlot(0,0);//m_contourPlot; //TODO leaking ?
     //plot->m_minimal = true;
-    int cols = dlg.getColumns(); //TODO parameter number of pixels unused here. update the dlg ui
+    if (cols < 1)
+        cols = 1;
     int width = rec.width()/cols;
     int height = width * .82;
-    surfaceAnalysisTools *saTools = surfaceAnalysisTools::get_Instance();
-    QList<int> list = saTools->SelectedWaveFronts();
 
     int rows =  ceil((float)list.size()/cols);
     int columns = std::min((int)list.size(),int(ceil((float)list.size()/rows)));
@@ -3962,8 +4048,8 @@ void SurfaceManager::showAllContours(){ //TODO move to contourview would make mo
     height = 2 * rec.height()/3;
     width = rec.width();
     w->resize(width,height);
-    w->show();
     QApplication::restoreOverrideCursor();
+    return w;
 }
 void showImage(const QImage &img, const QString &title){
     QLabel *myLabel = new QLabel;

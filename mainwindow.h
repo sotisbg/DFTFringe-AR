@@ -221,6 +221,7 @@ private slots:
 
     void on_actionEdit_Zernike_values_triggered();
     void on_actionSave_Zernike_file_triggered();
+    void on_actionAbracadabra_triggered();
 
 
     void on_actionCamera_Calibration_triggered();

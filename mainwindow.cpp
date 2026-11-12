@@ -59,8 +59,27 @@
 #include "zernikeprocess.h"
 #include "liveimageview.h"
 #include "liveviewdialog.h"
+#include <QCollator>
+#include <QElapsedTimer>
+#include <QRegularExpression>
 
 using namespace QtConcurrent;
+
+// Hides the green "OK" of Abracadabra at the next click or key press anywhere in the program.
+class AbracadabraOkHider : public QObject
+{
+public:
+    AbracadabraOkHider(QAction *act, QObject *parent) : QObject(parent), m_act(act) {}
+protected:
+    bool eventFilter(QObject *, QEvent *e) override {
+        if ((e->type() == QEvent::MouseButtonPress || e->type() == QEvent::KeyPress) && m_act->isVisible())
+            m_act->setVisible(false);
+        return false;
+    }
+private:
+    QAction *m_act;
+};
+
 std::vector<wavefront*> g_wavefronts;
 int g_currentsurface = 0;
 QScrollArea *gscrollArea;
@@ -111,7 +130,7 @@ MainWindow::MainWindow(QWidget *parent) :
                                     "QToolButton:hover {background-color: lightblue;}"
                                     "QToolButton:pressed {border-style: inset;}");
     QList<QAction *> textActions = {ui->actionRead_WaveFront, ui->actionSave_Zernike_file,
-                                    ui->actionSubtract_wave_front};
+                                    ui->actionSubtract_wave_front, ui->actionAbracadabra};
     foreach (QAction *a, textActions){
         QWidget *w = ui->toolBar->widgetForAction(a);
         if (!w)
@@ -119,6 +138,17 @@ MainWindow::MainWindow(QWidget *parent) :
         w->setStyleSheet(textToolButtonStyle);
         w->setMinimumHeight(toolBtnHeight);
         w->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
+    }
+
+    // Green result of Abracadabra, right of its button (hidden until the button has run OK)
+    {
+        QLabel *ok = new QLabel(ui->toolBar);
+        ok->setObjectName("abracadabraOk");
+        ok->setStyleSheet("QLabel { color: #1e8a3c; font: bold 14px; padding: 0 6px; }");
+        QAction *okAct = ui->toolBar->insertWidget(ui->actionAbracadabra, ok);   // left of the button, which stays the last one
+        okAct->setObjectName("abracadabraOkAction");
+        okAct->setVisible(false);
+        qApp->installEventFilter(new AbracadabraOkHider(okAct, this));   // gone at the next click or key
     }
 
     ui->SelectOutSideOutline->setChecked(true);
@@ -1691,6 +1721,273 @@ void MainWindow::on_actionSave_Zernike_file_triggered()
     // Same as Tools - Edit Zernike values - Import current wavefront - Save to file.
     zernikeEditDlg dlg(m_surfaceManager, this);
     dlg.importCurrentAndSave();
+}
+
+// Abracadabra: today's folder of the current mirror -> next number, process, clean with
+// Accuracy, average, save .wft/.zrn, difference to the previous record, picture.
+void MainWindow::on_actionAbracadabra_triggered()
+{
+    static bool running = false;
+    if (running)
+        return;
+    running = true;
+    struct Reset { bool &f; ~Reset(){ f = false; } } reset{running};
+
+    const QString title = "Abracadabra";
+    // green "OK" next to the button when everything went well, nothing otherwise
+    QLabel *okLabel = ui->toolBar->findChild<QLabel *>("abracadabraOk");
+    QAction *okAction = ui->toolBar->findChild<QAction *>("abracadabraOkAction");
+    if (okAction)
+        okAction->setVisible(false);
+    auto showOk = [okLabel, okAction](const QString &text){
+        if (okLabel)
+            okLabel->setText(text);
+        if (okAction)
+            okAction->setVisible(true);
+    };
+    QSettings settings;
+
+    // 1. the folder of the current mirror = where its .json/.mir file is
+    QString cfg = settings.value("mirrorConfigFile").toString();
+    QString mirrorPath = cfg.isEmpty() ? QString() : QFileInfo(cfg).absolutePath();
+    if (mirrorPath.isEmpty() || !QDir(mirrorPath).exists())
+        mirrorPath = settings.value("lastPath").toString();
+    QDir mirrorDir(mirrorPath);
+    if (mirrorPath.isEmpty() || !mirrorDir.exists()){
+        QMessageBox::warning(this, title, "There is no current mirror folder. Load the mirror first.");
+        return;
+    }
+
+    // 2. numbered sub folders and today's folder
+    QStringList todayKeys;     // today's date in the usual ways, digits only
+    QDate today = QDate::currentDate();
+    for (const char *fmt : {"yyyyMMdd", "ddMMyyyy", "MMddyyyy", "yyMMdd", "ddMMyy"})
+        todayKeys << today.toString(fmt);
+    QRegularExpression digitsOnly("^\\d+$");
+    int maxNum = -1;
+    QFileInfo dateDir;
+    bool haveDate = false, dateIsToday = false;
+    auto created = [](const QFileInfo &fi){
+        return fi.birthTime().isValid() ? fi.birthTime() : fi.lastModified();
+    };
+    const QFileInfoList subdirs = mirrorDir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
+    for (const QFileInfo &fi : subdirs){
+        if (digitsOnly.match(fi.fileName()).hasMatch()){
+            maxNum = qMax(maxNum, fi.fileName().toInt());
+            continue;
+        }
+        QString digits = fi.fileName();
+        digits.remove(QRegularExpression("\\D"));
+        bool isToday = false;
+        for (const QString &k : todayKeys)
+            if (digits.contains(k))
+                isToday = true;
+        // a folder named as today wins; otherwise the newest one
+        bool better = !haveDate || (isToday && !dateIsToday) ||
+                      (isToday == dateIsToday && created(fi) > created(dateDir));
+        if (better){
+            dateDir = fi;
+            haveDate = true;
+            dateIsToday = isToday;
+        }
+    }
+    if (!haveDate){
+        QMessageBox::warning(this, title, "There is no folder with today's date in\n" +
+                             QDir::toNativeSeparators(mirrorPath));
+        return;
+    }
+    const int number = maxNum < 0 ? 0 : maxNum + 1;
+    const QString numberText = QString::number(number);
+
+    // images of a folder, in natural order (IMG_999 before IMG_1000)
+    auto listIgrams = [](const QString &dirPath){
+        QStringList res;
+        const QStringList ext = {"jpg", "jpeg", "png", "bmp", "tif", "tiff"};
+        const QFileInfoList files = QDir(dirPath).entryInfoList(QDir::Files);
+        for (const QFileInfo &fi : files)
+            if (ext.contains(fi.suffix().toLower()) || RawImage::isRawFile(fi.absoluteFilePath()))
+                res << fi.absoluteFilePath();
+        QCollator collator;
+        collator.setNumericMode(true);
+        collator.setCaseSensitivity(Qt::CaseInsensitive);
+        std::sort(res.begin(), res.end(), [&collator](const QString &a, const QString &b){
+            return collator.compare(QFileInfo(a).fileName(), QFileInfo(b).fileName()) < 0;
+        });
+        return res;
+    };
+    if (listIgrams(dateDir.absoluteFilePath()).isEmpty()){
+        QMessageBox::warning(this, title, "There are no interferograms in\n" +
+                             QDir::toNativeSeparators(dateDir.absoluteFilePath()));
+        return;
+    }
+
+    // 3. rename
+    if (!mirrorDir.rename(dateDir.fileName(), numberText)){
+        QMessageBox::warning(this, title, QString("Could not rename \"%1\" to \"%2\". Is the folder open in another program?")
+                             .arg(dateDir.fileName(), numberText));
+        return;
+    }
+    const QString igramDir = mirrorDir.filePath(numberText);
+    const QStringList igrams = listIgrams(igramDir);
+
+    // wait until the surfaces are made and the surface tools are enabled again
+    auto waitReady = [this](int ms){
+        QElapsedTimer t;
+        t.start();
+        while (t.elapsed() < ms &&
+               !(m_surfaceManager->m_surface_finished && m_surfTools->isEnabled())){
+            QApplication::processEvents(QEventLoop::AllEvents, 50);
+            QThread::msleep(10);
+        }
+    };
+
+    // 4. all interferograms, with the current DFTFringe settings (the way the batch does it)
+    QList<wavefront *> made;
+    QStringList skipped;
+    int n = 0;
+    for (const QString &fn : igrams){
+        statusBar()->showMessage(QString("Abracadabra: %1 / %2  %3")
+                                 .arg(++n).arg(igrams.size()).arg(QFileInfo(fn).fileName()));
+        QApplication::processEvents();
+        ui->SelectOutSideOutline->setChecked(true);
+        if (!m_igramArea->openImage(fn)){
+            skipped << QFileInfo(fn).fileName() + " (cannot be read)";
+            continue;
+        }
+        QApplication::processEvents();
+        if (m_igramArea->m_outside.m_radius == 0){
+            skipped << QFileInfo(fn).fileName() + " (no outline)";
+            continue;
+        }
+        m_igramArea->nextStep();
+        QApplication::processEvents();
+        ui->tabWidget->setCurrentIndex(2);
+        m_dftTools->wasPressed = true;
+        m_dftArea->success = false;
+        m_dftArea->makeSurface();
+        QApplication::processEvents();
+        if (!m_dftArea->success || m_surfaceManager->m_wavefronts.isEmpty()){
+            skipped << QFileInfo(fn).fileName() + " (failed)";
+            continue;
+        }
+        made << m_surfaceManager->m_wavefronts.back();
+    }
+    waitReady(60000);
+    QString skippedText = skipped.isEmpty() ? QString()
+                          : "\n\nSkipped:\n" + skipped.join("\n");
+    if (made.size() < 4){
+        QMessageBox::warning(this, title, QString("Only %1 wave fronts were made, Accuracy needs at least four. "
+                             "The folder is already renamed to \"%2\".").arg(made.size()).arg(numberText) + skippedText);
+        return;
+    }
+
+    // 5. Accuracy until no red point is left
+    int removed = 0;
+    QString err;
+    if (!m_surfaceManager->cleanByAccuracy(made, removed, err)){
+        QMessageBox::warning(this, title, "Accuracy stopped: " + err + skippedText);
+        return;
+    }
+    // the last Accuracy (no red points) as Accuracy.pdf in the folder of the interferograms
+    const QString accPdf = m_surfaceManager->writeAccuracyPdf(made, igramDir);
+
+    // 6. mark the rest and average them
+    QList<int> idx;
+    for (wavefront *wf : made)
+        idx << m_surfaceManager->m_wavefronts.indexOf(wf);
+    m_surfTools->selectIndices(idx);
+    const int before = m_surfaceManager->m_wavefronts.size();
+    m_surfaceManager->average(made);
+    if (m_surfaceManager->m_wavefronts.size() <= before){   // cancelled in the dialog of the average
+        QMessageBox::warning(this, title, "The average was not made (cancelled). The folder is already renamed to \"" +
+                             numberText + "\"." + skippedText);
+        return;
+    }
+    waitReady(60000);
+    wavefront *avg = m_surfaceManager->m_wavefronts.back();
+    const QString record = "0" + numberText;     // 0 + number of the folder; the name in the list stays "Average"
+
+    // 7. wave front and Zernike file with the same number, in the mirror folder
+    const QString wftPath = mirrorDir.filePath(record + ".wft");
+    const QString zrnPath = mirrorDir.filePath(record + ".zrn");
+    const QString picPath = mirrorDir.filePath(record + ".jpg");
+    for (const QString &p : {wftPath, zrnPath, picPath}){
+        if (QFile::exists(p) &&
+            QMessageBox::question(this, title, QDir::toNativeSeparators(p) + " exists. Overwrite?") != QMessageBox::Yes)
+            return;
+    }
+    m_surfaceManager->writeWavefront(wftPath, avg, false);
+    bool zrnOk;
+    {
+        zernikeEditDlg zdlg(m_surfaceManager, this);
+        zrnOk = zdlg.importCurrentAndSaveAs(zrnPath);
+    }
+
+    // 8. the record before this one: the highest number below ours
+    QString prevPath;
+    int prevNum = -1;
+    QRegularExpression wftName("^(\\d+)\\.wft$", QRegularExpression::CaseInsensitiveOption);
+    const QFileInfoList wfts = mirrorDir.entryInfoList(QStringList() << "*.wft", QDir::Files);
+    for (const QFileInfo &fi : wfts){
+        QRegularExpressionMatch m = wftName.match(fi.fileName());
+        if (!m.hasMatch())
+            continue;
+        int v = m.captured(1).toInt();     // 04.wft is record 4, like folder 4
+        if (v < number && v > prevNum){
+            prevNum = v;
+            prevPath = fi.absoluteFilePath();
+        }
+    }
+    QString report = QString("%1 interferograms, %2 far out removed, %3 averaged.\nSaved %4%5")
+                     .arg(igrams.size() - skipped.size()).arg(removed).arg(made.size())
+                     .arg(QDir::toNativeSeparators(wftPath),
+                          zrnOk ? ("\nand " + QDir::toNativeSeparators(zrnPath))
+                                : QString("\n(the Zernike file could not be saved)"));
+    if (prevNum < 0){
+        waitReady(30000);
+        statusBar()->showMessage("Abracadabra: done (no previous record)");
+        m_surfTools->clickRow(m_surfaceManager->m_wavefronts.indexOf(avg));
+        if (!zrnOk || accPdf.isEmpty() || !skipped.isEmpty())
+            QMessageBox::warning(this, title, report +
+                (accPdf.isEmpty() ? QString("\n\nAccuracy.pdf could not be saved.") : QString()) + skippedText);
+        else
+            showOk(QString("OK  %1, no previous record").arg(record));
+        return;
+    }
+
+    // 9. read the previous record and subtract it from the last one
+    try {
+        m_surfaceManager->loadWavefront(prevPath);
+    } catch (int) {
+        QMessageBox::warning(this, title, report + "\n\nCould not read " + QDir::toNativeSeparators(prevPath));
+        return;
+    }
+    wavefront *prev = m_surfaceManager->m_wavefronts.back();
+    waitReady(60000);
+    m_surfaceManager->subtract(avg, prev, false);
+    wavefront *diff = m_surfaceManager->m_wavefronts.back();
+    waitReady(60000);
+
+    // 10. mark the three, draw them in 3 columns and save the picture
+    QList<int> three;
+    three << m_surfaceManager->m_wavefronts.indexOf(prev)
+          << m_surfaceManager->m_wavefronts.indexOf(avg)
+          << m_surfaceManager->m_wavefronts.indexOf(diff);
+    m_surfTools->selectIndices(three);
+    QWidget *pic = m_surfaceManager->buildAllContours(three, 3);
+    bool picOk = m_surfaceManager->m_allContours.save(picPath);
+    delete pic;                                  // no window to close
+
+    // 11. mark and click Average in the list
+    waitReady(30000);
+    activateWindow();
+    m_surfTools->clickRow(m_surfaceManager->m_wavefronts.indexOf(avg));
+    statusBar()->showMessage("Abracadabra: done, " + QString::number(number) + " saved");
+    if (!picOk || !zrnOk || accPdf.isEmpty() || !skipped.isEmpty())
+        QMessageBox::warning(this, title, report + (picOk ? QString() : "\n\nThe picture could not be saved.") +
+                             (accPdf.isEmpty() ? QString("\n\nAccuracy.pdf could not be saved.") : QString()) + skippedText);
+    else
+        showOk(QString("OK  %1: %2 averaged, %3 removed").arg(record).arg(made.size()).arg(removed));
 }
 
 void MainWindow::on_actionCamera_Calibration_triggered()

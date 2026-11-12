@@ -69,6 +69,6 @@ QString accuracyReportHtml(const AccuracyResult &r, const QString &title);
 
 // Writes the report as a PDF and shows it.  Returns the PDF path ("" if not written).
 QString showAccuracyReport(const AccuracyResult &r, const QString &title,
-                           const QString &pdfPath, QWidget *parent);
+                           const QString &pdfPath, QWidget *parent, bool showWindow = true);
 
 #endif // IGRAMACCURACY_H

@@ -52,6 +52,8 @@ public:
     void setGaussianStateText(const QString & str);
     void nameChangedN(int, const QString&);
     void select(int item);
+    void selectIndices(const QList<int> &rows);   // selects exactly these rows
+    void clickRow(int row);   // marks the row and clicks it: it becomes the shown wave front
     void deleteLast();
 
 signals:

@@ -155,12 +155,28 @@ void zernikeEditDlg::on_save_clicked()
     if (fileName.isEmpty())
         return;
 
-    std::ofstream ofile(fileName.toStdString().c_str());
+    writeFile(fileName);
+}
 
+bool zernikeEditDlg::writeFile(const QString &fileName)
+{
+    std::ofstream ofile(fileName.toStdString().c_str());
+    if (!ofile)
+        return false;
     for (unsigned int i = 0; i < tableModel->values.size(); ++i){
         ofile << tableModel->values[i] << std::endl;
     }
     ofile.close();
+    return true;
+}
+
+// Same as importCurrentAndSave(), but into the given file without asking (Abracadabra).
+bool zernikeEditDlg::importCurrentAndSaveAs(const QString &fileName)
+{
+    if (m_sm->m_wavefronts.size() == 0)
+        return false;
+    on_useCurrent_clicked();
+    return writeFile(fileName);
 }
 extern std::vector<bool> zernEnables;
 void zernikeEditDlg::on_useCurrent_clicked()
