@@ -1982,6 +1982,10 @@ void MainWindow::on_actionAbracadabra_triggered()
     }
     wavefront *prev = m_surfaceManager->m_wavefronts.back();
     waitReady(60000);
+    // for the difference and the picture the average carries the new name (05.wft - 04.wft);
+    // in the list it stays "Average" and gets its old name back afterwards
+    const QString avgOldName = avg->name;
+    avg->name = record + ".wft";
     m_surfaceManager->subtract(avg, prev, false);
     wavefront *diff = m_surfaceManager->m_wavefronts.back();
     waitReady(60000);
@@ -1995,6 +1999,7 @@ void MainWindow::on_actionAbracadabra_triggered()
     QWidget *pic = m_surfaceManager->buildAllContours(three, 3);
     bool picOk = m_surfaceManager->m_allContours.save(picPath);
     delete pic;                                  // no window to close
+    avg->name = avgOldName;
 
     // 11. mark and click Average in the list
     waitReady(30000);
