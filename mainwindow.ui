@@ -1284,7 +1284,7 @@ em;
   </action>
   <action name="actionAbracadabra">
    <property name="text">
-    <string>Abracadabra</string>
+    <string>ABRACADABRA</string>
    </property>
    <property name="toolTip">
     <string>Renames today's folder of this mirror to the next number, processes its interferograms, removes the far out ones (Accuracy), averages, saves the average (.wft and .zrn) and a picture of the last two averages and their difference.</string>
